@@ -1,5 +1,5 @@
 // backend/src/models/TokenBlacklist.js
-import mongoose from 'mongoose';
+const mongoose = require('mongoose');
 
 const tokenBlacklistSchema = new mongoose.Schema({
     token: {
@@ -25,4 +25,4 @@ const tokenBlacklistSchema = new mongoose.Schema({
 // Auto-delete expired tokens (TTL index)
 tokenBlacklistSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-export default mongoose.model('TokenBlacklist', tokenBlacklistSchema);
+module.exports = mongoose.model('TokenBlacklist', tokenBlacklistSchema);

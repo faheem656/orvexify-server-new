@@ -49,4 +49,4 @@ Thank you,
   }
 };
 
-export {defaultTemplates}
+module.exports = defaultTemplates;

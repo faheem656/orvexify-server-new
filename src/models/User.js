@@ -1,7 +1,7 @@
 // src/models/User.js — Complete with isActive
 
-import mongoose from "mongoose";
-import bcrypt from "bcryptjs";
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
@@ -32,6 +32,7 @@ const userSchema = new mongoose.Schema(
       default: false,
     },
     isActive: {
+      // ✅ ADD THIS FIELD
       type: Boolean,
       default: true,
     },
@@ -70,6 +71,8 @@ const userSchema = new mongoose.Schema(
       sparse: true,
       default: null,
     },
+
+    // Settings
     dateFormat: {
       type: String,
       default: "YYYY-MM-DD",
@@ -172,4 +175,4 @@ userSchema.methods.changedPasswordAfter = function (JWTTimestamp) {
   return false;
 };
 
-export default mongoose.model("User", userSchema);
+module.exports = mongoose.model("User", userSchema);

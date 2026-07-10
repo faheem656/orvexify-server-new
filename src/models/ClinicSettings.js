@@ -1,5 +1,5 @@
 // src/models/ClinicSettings.js
-import mongoose from 'mongoose';
+const mongoose = require('mongoose');
 
 const clinicSettingsSchema = new mongoose.Schema({
   userId: {
@@ -57,4 +57,4 @@ clinicSettingsSchema.pre('save', function(next) {
   next();
 });
 
-export default mongoose.model('ClinicSettings', clinicSettingsSchema);
+module.exports = mongoose.model('ClinicSettings', clinicSettingsSchema);

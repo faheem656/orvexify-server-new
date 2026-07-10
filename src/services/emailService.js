@@ -1,10 +1,10 @@
 // src/services/emailService.js — Complete Updated Version with CSS Background Tracking
 
-import nodemailer from "nodemailer";
-import crypto from "crypto";
-import User from "../models/User.js";
-import ReminderLog from "../models/ReminderLog.js";
-import { decrypt } from "../utils/encryption.js";
+const nodemailer = require("nodemailer");
+const crypto = require("crypto");
+const User = require("../models/User");
+const ReminderLog = require("../models/ReminderLog");
+const { decrypt } = require("../utils/encryption");
 
 // ============ GET USER EMAIL SETTINGS ============
 const getUserEmailSettings = async (userId) => {
@@ -978,7 +978,7 @@ const sendNoResponseFollowUp = async (
 };
 
 // ============ EXPORT ALL ============
-export {
+module.exports = {
   sendEmailFromClinic,
   sendVerificationEmail,
   sendBookingConfirmation,

@@ -1,27 +1,28 @@
 {
-  "name": "orvexify-backend",
+  "name": "backend",
   "version": "1.0.0",
-  "description": "",
-  "license": "ISC",
-  "author": "",
-  "type": "module",
-  "main": "server.js",
+  "description": "orvexify Registration API",
+  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "nodemon server.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
-    "bcryptjs": "^3.0.3",
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.6",
     "crypto-js": "^4.2.0",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "express-validator": "^7.3.2",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.2",
+    "express-validator": "^7.0.1",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.7.4",
-    "nodemailer": "^9.0.3",
-    "nodemon": "^3.1.14",
+    "moment-timezone": "^0.6.2",
+    "mongoose": "^8.24.1",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^6.10.1",
     "qrcode": "^1.5.4",
     "speakeasy": "^2.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
   }
 }

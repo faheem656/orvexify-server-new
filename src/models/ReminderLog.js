@@ -1,6 +1,6 @@
 // src/models/ReminderLog.js — Complete Fixed Version (Node.js)
 
-import mongoose from "mongoose";
+const mongoose = require("mongoose");
 
 const reminderLogSchema = new mongoose.Schema({
   userId: {
@@ -112,4 +112,4 @@ reminderLogSchema.index({ appointmentId: 1 });
 reminderLogSchema.index({ trackingToken: 1 });
 reminderLogSchema.index({ opened: 1, clicked: 1 });
 
-export default mongoose.model("ReminderLog", reminderLogSchema);
+module.exports = mongoose.model("ReminderLog", reminderLogSchema);

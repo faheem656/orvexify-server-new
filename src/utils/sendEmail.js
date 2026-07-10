@@ -1,51 +1,12 @@
 // src/utils/sendEmail.js — Add tracking
-import crypto from 'crypto';
-import { sendEmail } from '../config/email.js';
-import ReminderLog from '../models/ReminderLog.js';
+
+const crypto = require('crypto');
+const { sendEmail } = require('../config/email');
+const ReminderLog = require('../models/ReminderLog');
 
 // Generate tracking token
 const generateTrackingToken = () => {
   return crypto.randomBytes(32).toString('hex');
-};
-
-// ============ SEND WELCOME EMAIL ============
-const sendWelcomeEmail = async (to, name) => {
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>Welcome to Orvexify</title>
-      <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 500px; margin: 0 auto; background: #ffffff; }
-        .header { background: linear-gradient(135deg, #3b82f6, #06b6d4); padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-        .header h1 { color: white; margin: 0; font-size: 24px; }
-        .content { padding: 30px; background: #f8fafc; border-radius: 0 0 10px 10px; }
-        .footer { text-align: center; padding: 20px; color: #94a3b8; font-size: 12px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>Welcome to Orvexify!</h1>
-        </div>
-        <div class="content">
-          <h2>Hello ${name},</h2>
-          <p>Thank you for registering with Orvexify.</p>
-          <p>Your email has been successfully verified.</p>
-          <p>You can now start managing your appointments, patients, and reminders.</p>
-          <p style="margin-top: 20px;">Best regards,<br><strong>Orvexify Team</strong></p>
-        </div>
-        <div class="footer">
-          <p>&copy; 2024 Orvexify. All rights reserved.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  return await sendEmail(to, 'Welcome to Orvexify!', html);
 };
 
 // Send reminder email with tracking
@@ -53,8 +14,13 @@ const sendReminderEmail = async (appointment, patient, doctor, clinic, reminderT
   const clinicName = clinic.clinicName || 'Clinic';
   const doctorName = doctor?.name || 'Doctor';
   
+  // Generate tracking token for this email
   const trackingToken = generateTrackingToken();
+  
+  // Tracking pixel URL (for open tracking)
   const trackingPixelUrl = `${process.env.FRONTEND_URL}/api/track/open/${trackingToken}`;
+  
+  // Confirm and cancel links with tracking
   const confirmLink = `${process.env.FRONTEND_URL}/confirm/${appointment.confirmationToken}?track=${trackingToken}`;
   const cancelLink = `${process.env.FRONTEND_URL}/cancel/${appointment.cancellationToken}?track=${trackingToken}`;
   
@@ -104,17 +70,23 @@ const sendReminderEmail = async (appointment, patient, doctor, clinic, reminderT
           <p><a href="${process.env.FRONTEND_URL}/privacy">Privacy Policy</a></p>
         </div>
       </div>
+      <!-- Tracking Pixel -->
       <img src="${trackingPixelUrl}" alt="" style="display:none;" width="1" height="1" />
     </body>
     </html>
   `;
   
+  // Update log with tracking token
   await ReminderLog.findByIdAndUpdate(logId, {
     trackingToken: trackingToken
   });
   
   return await sendEmail(patient.email, `Appointment Reminder - ${clinicName}`, html);
 };
+
+
+
+
 
 const sendBookingConfirmation = async (to, name, date, time, clinicName) => {
   const html = `
@@ -160,9 +132,9 @@ const sendBookingConfirmation = async (to, name, date, time, clinicName) => {
   return await sendEmail(to, 'Appointment Confirmed - Orvexify', html);
 };
 
-// ============ EXPORT ALL ============
-export { 
-  sendWelcomeEmail,
-  sendBookingConfirmation,
+
+module.exports = { 
+  sendEmail: sendEmail,
+  sendBookingConfirmation,  // ✅ ADD THIS
   sendReminderEmail
 };

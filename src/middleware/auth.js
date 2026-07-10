@@ -1,8 +1,8 @@
 // src/middleware/auth.js — COMPLETE FIXED VERSION
 
-import jwt from "jsonwebtoken";
-import TokenBlacklist from "../models/TokenBlacklist.js";
-import User from "../models/User.js";
+const jwt = require("jsonwebtoken");
+const TokenBlacklist = require("../models/TokenBlacklist");
+const User = require("../models/User");
 
 const protect = async (req, res, next) => {
   let token;
@@ -36,20 +36,24 @@ const protect = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.id).select("-passwordHash");
+    
 
-    if (decoded.version !== undefined && decoded.version !== user.tokenVersion) {
-      await TokenBlacklist.create({
-        token,
-        userId: user._id,
-        expiresAt: new Date(decoded.exp * 1000),
-      });
-      
-      return res.status(401).json({
-        success: false,
-        message: "Session expired. Please login again.",
-      });
-    }
 
+      if (decoded.version !== undefined && decoded.version !== user.tokenVersion) {
+    // Blacklist the old token
+    await TokenBlacklist.create({
+      token,
+      userId: user._id,
+      expiresAt: new Date(decoded.exp * 1000),
+    });
+    
+    return res.status(401).json({
+      success: false,
+      message: "Session expired. Please login again.",
+    });
+  }
+
+  
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -106,6 +110,7 @@ const protect = async (req, res, next) => {
 
 // ✅ FIXED generateToken function
 const generateToken = (user, expiresIn = null) => {
+  // Ensure we have a valid expiry value
   const expiry = expiresIn || process.env.JWT_EXPIRES_IN || "7d";
   
   const payload = {
@@ -118,8 +123,9 @@ const generateToken = (user, expiresIn = null) => {
     return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: expiry });
   } catch (error) {
     console.error("JWT Sign Error:", error);
+    // Fallback token without expiry
     return jwt.sign(payload, process.env.JWT_SECRET);
   }
 };
 
-export { protect, generateToken };
+module.exports = { protect, generateToken };

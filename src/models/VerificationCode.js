@@ -1,5 +1,5 @@
 // src/models/VerificationCode.js
-import mongoose from 'mongoose';
+const mongoose = require('mongoose');
 
 const verificationCodeSchema = new mongoose.Schema({
     userId: {
@@ -24,4 +24,4 @@ const verificationCodeSchema = new mongoose.Schema({
 // Auto delete after 10 minutes
 verificationCodeSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-export default mongoose.model('VerificationCode', verificationCodeSchema);
+module.exports = mongoose.model('VerificationCode', verificationCodeSchema);

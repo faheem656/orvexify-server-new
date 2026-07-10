@@ -1,5 +1,5 @@
 // src/utils/encryption.js
-import CryptoJS from 'crypto-js';
+const CryptoJS = require('crypto-js');
 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'your-secret-key-min-32-characters-long';
 
@@ -26,4 +26,4 @@ const decrypt = (ciphertext) => {
   }
 };
 
-export { encrypt, decrypt };
+module.exports = { encrypt, decrypt };
