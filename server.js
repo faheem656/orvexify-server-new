@@ -1,31 +1,22 @@
 // server.js
-const express = require('express');
-const cors = require('cors');
-const dotenv = require('dotenv');
-const connectDB = require('./src/config/database');
-const authRoutes = require('./src/routes/authRoutes');
-const templateRoutes = require('./src/routes/templateRoutes');
-const reminderRoutes = require('./src/routes/reminderRoutes');
-const notificationRoutes = require('./src/routes/notificationRoutes');
-const settingsRoutes = require('./src/routes/settingsRoutes');
-const doctorRoutes = require('./src/routes/doctorRoutes');
-const bookingRoutes = require('./src/routes/bookingRoutes');
-const appointmentRoutes = require('./src/routes/appointmentRoutes');
-const patientRoutes = require('./src/routes/patientRoutes');
-const reminderLogRoutes = require('./src/routes/reminderLogRoutes');
-const trackingRoutes = require('./src/routes/trackingRoutes');
-const integrationRoutes = require('./src/routes/integrationRoutes');
+const express = require("express");
+const cors = require("cors");
+const dotenv = require("dotenv");
+const connectDB = require("./src/config/database");
+const authRoutes = require("./src/routes/authRoutes");
+const templateRoutes = require("./src/routes/templateRoutes");
+const reminderRoutes = require("./src/routes/reminderRoutes");
+const notificationRoutes = require("./src/routes/notificationRoutes");
+const settingsRoutes = require("./src/routes/settingsRoutes");
+const doctorRoutes = require("./src/routes/doctorRoutes");
+const bookingRoutes = require("./src/routes/bookingRoutes");
+const appointmentRoutes = require("./src/routes/appointmentRoutes");
+const patientRoutes = require("./src/routes/patientRoutes");
+const reminderLogRoutes = require("./src/routes/reminderLogRoutes");
+const trackingRoutes = require("./src/routes/trackingRoutes");
+const integrationRoutes = require("./src/routes/integrationRoutes");
 
-
-const dns = require("dns");
-dns.setServers(["8.8.8.8", "1.1.1.1"]);
-
-
-
-require('./src/scheduler/reminderScheduler');
-
-
-
+require("./src/scheduler/reminderScheduler");
 
 dotenv.config();
 
@@ -40,46 +31,43 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Routes
-app.use('/api/auth', authRoutes);
-app.use('/api', templateRoutes);
-app.use('/api', reminderRoutes);
-app.use('/api', notificationRoutes);
-app.use('/api', settingsRoutes);
-app.use('/api', doctorRoutes);
-app.use('/api/booking', bookingRoutes);
-app.use('/api', appointmentRoutes);
-app.use('/api', patientRoutes);
-app.use('/api', reminderLogRoutes);
-app.use('/api/tracking', trackingRoutes);
-app.use('/api', integrationRoutes);
-app.use('/api/appointments', appointmentRoutes);
-app.use('/api/tracking', trackingRoutes);
-app.use('/api/dashboard', require('./src/routes/dashboardRoutes')); // ✅ ADD THIS
+app.use("/api/auth", authRoutes);
+app.use("/api", templateRoutes);
+app.use("/api", reminderRoutes);
+app.use("/api", notificationRoutes);
+app.use("/api", settingsRoutes);
+app.use("/api", doctorRoutes);
+app.use("/api/booking", bookingRoutes);
+app.use("/api", appointmentRoutes);
+app.use("/api", patientRoutes);
+app.use("/api", reminderLogRoutes);
+app.use("/api/tracking", trackingRoutes);
+app.use("/api", integrationRoutes);
+app.use("/api/appointments", appointmentRoutes);
+app.use("/api/tracking", trackingRoutes);
+app.use("/api/dashboard", require("./src/routes/dashboardRoutes")); // ✅ ADD THIS
 
 // Health check
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'OK', message: 'Server is running' });
+app.get("/api/health", (req, res) => {
+  res.json({ status: "OK", message: "Server is running" });
 });
 
+require("./src/scheduler/reportScheduler");
 
-
-require('./src/scheduler/reportScheduler');
-
-console.log('✅ Report scheduler loaded');
-
+console.log("✅ Report scheduler loaded");
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ 
-        success: false, 
-        message: 'Something went wrong!' 
-    });
+  console.error(err.stack);
+  res.status(500).json({
+    success: false,
+    message: "Something went wrong!",
+  });
 });
 
 // Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📍 http://localhost:${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📍 http://localhost:${PORT}`);
 });
