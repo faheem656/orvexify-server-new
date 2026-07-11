@@ -6,7 +6,7 @@ const { body, validationResult } = require("express-validator");
 const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
 const crypto = require("crypto"); // ✅ ADD THIS LINE
-
+const {sendWelcomeEmail} = require("../utils/sendEmail")
 // Models
 const User = require("../models/User");
 const VerificationCode = require("../models/VerificationCode");
@@ -15,7 +15,6 @@ const TokenBlacklist = require("../models/TokenBlacklist");
 // Utils
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
 const { generateVerificationCode } = require("../utils/generateToken");
-const { sendWelcomeEmail } = require("../utils/sendEmail");
 const { protect, generateToken } = require("../middleware/auth");
 const bcrypt = require("bcryptjs");
 const { sendEmail } = require("../config/email");
@@ -170,7 +169,7 @@ router.post(
       );
 
       // Generate JWT token
-      const token = generateToken(user._id, user.email);
+      const token = generateToken(user);
 
       res.status(201).json({
         success: true,
@@ -269,7 +268,7 @@ router.post(
       await sendWelcomeEmail(user.email, user.fullName);
 
       // Generate new token
-      const token = generateToken(user._id, user.email);
+      const token = generateToken(user);
 
       res.json({
         success: true,
@@ -339,7 +338,7 @@ router.post(
       });
 
       // Resend email
-      await sendVerificationEmail(user.email, user.fullName, verificationCode);
+      await sendVerificationEmail(user._id, user.email, user.fullName, verificationCode);
 
       res.json({
         success: true,

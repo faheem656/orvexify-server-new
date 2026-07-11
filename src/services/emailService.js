@@ -19,12 +19,27 @@ const getUserEmailSettings = async (userId) => {
     console.log("📧 User email settings check:");
     console.log("  - smtpHost:", user.smtpHost ? "✅ Set" : "❌ Not set");
     console.log("  - fromEmail:", user.fromEmail ? "✅ Set" : "❌ Not set");
-    console.log(
-      "  - emailPassword:",
-      user.emailPassword ? "✅ Set" : "❌ Not set",
-    );
+    console.log("  - emailPassword:", user.emailPassword ? "✅ Set" : "❌ Not set");
 
+    // ✅ If no SMTP settings, use default (development only)
     if (!user.smtpHost || !user.fromEmail || !user.emailPassword) {
+      console.log("⚠️ No SMTP configured, using default settings...");
+      
+      // ✅ Check if default env variables are set
+      if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+        console.log("✅ Using default email settings from .env");
+        return {
+          smtpHost: process.env.EMAIL_HOST,
+          smtpPort: process.env.EMAIL_PORT || "587",
+          fromEmail: process.env.EMAIL_FROM || user.email,
+          fromName: user.fromName || user.clinicName || "Clinic",
+          password: process.env.EMAIL_PASS,
+          useTLS: true,
+          useSSL: false,
+          timezone: user.timezone || "Asia/Karachi",
+        };
+      }
+      
       console.log("❌ Missing email configuration for clinic");
       return null;
     }
@@ -62,6 +77,7 @@ const getUserEmailSettings = async (userId) => {
   }
 };
 
+
 // ============ GENERATE TRACKING TOKEN ============
 const generateTrackingToken = () => {
   return crypto.randomBytes(32).toString("hex");
@@ -69,27 +85,31 @@ const generateTrackingToken = () => {
 
 // ============ CREATE TRANSPORTER ============
 const createTransporter = (settings) => {
+  const port = parseInt(settings.smtpPort) || 587;
+  
   console.log("📧 Creating transporter:");
   console.log("  - host:", settings.smtpHost);
-  console.log("  - port:", settings.smtpPort);
+  console.log("  - port:", port);
   console.log("  - user:", settings.fromEmail);
-  console.log("  - password length:", settings.password?.length || 0);
+  console.log("  - secure:", port === 465);
 
   return nodemailer.createTransport({
     host: settings.smtpHost,
-    port: parseInt(settings.smtpPort) || 587,
-    secure: settings.useSSL || false,
+    port: port,
+    secure: port === 465, // ✅ Port 465 = SSL, Port 587 = STARTTLS
     auth: {
       user: settings.fromEmail,
       pass: settings.password,
     },
     tls: {
       rejectUnauthorized: false,
+      minVersion: 'TLSv1.2',
     },
     connectionTimeout: 10000,
     greetingTimeout: 10000,
   });
 };
+
 
 // ============ SEND EMAIL (UNIVERSAL) ============
 const sendEmailFromClinic = async (userId, to, subject, html, text = "") => {
@@ -128,7 +148,7 @@ const sendEmailFromClinic = async (userId, to, subject, html, text = "") => {
     }
 
     const info = await transporter.sendMail({
-      from: `"${settings.fromName}" <${settings.fromEmail}>`,
+      from: `"Orvexify" <${settings.fromEmail}>`,
       to: to,
       subject: subject,
       text: text || html.replace(/<[^>]*>/g, ""),
@@ -269,7 +289,7 @@ const sendVerificationEmail = async (userId, to, name, code) => {
   console.log(`📧 Sending verification email to: ${to}`);
 
   const settings = await getUserEmailSettings(userId);
-  const clinicName = settings?.fromName || "Orvexify";
+  const clinicName =  "Orvexify";
 
   const html = `
     <!DOCTYPE html>

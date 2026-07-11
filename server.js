@@ -16,6 +16,9 @@ const reminderLogRoutes = require("./src/routes/reminderLogRoutes");
 const trackingRoutes = require("./src/routes/trackingRoutes");
 const integrationRoutes = require("./src/routes/integrationRoutes");
 
+const dns = require("dns");
+dns.setServers(["8.8.8.8", "1.1.1.1"]);
+
 require("./src/scheduler/reminderScheduler");
 
 dotenv.config();
