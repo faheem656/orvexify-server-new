@@ -1,4 +1,4 @@
-// src/routes/dashboardRoutes.js — Create this file
+// src/routes/dashboardRoutes.js — Fixed Version
 
 const express = require('express');
 const router = express.Router();
@@ -58,11 +58,14 @@ router.get('/stats', protect, async (req, res) => {
     const doctorMap = {};
     doctors.forEach(d => doctorMap[d._id] = d);
 
+    // ✅ FIXED: Include appointmentDate in response
     const appointments = upcomingAppointments.map(apt => ({
       id: apt._id,
       patientName: patientMap[apt.patientId]?.name || 'Unknown Patient',
       patientEmail: patientMap[apt.patientId]?.email || '',
-      time: apt.appointmentTime,
+      appointmentDate: apt.appointmentDate, // ✅ ADDED
+      appointmentTime: apt.appointmentTime, // ✅ ADDED
+      time: apt.appointmentTime, // Keep for backward compatibility
       doctor: doctorMap[apt.doctorId]?.name || 'Unknown Doctor',
       status: apt.status,
       confirmationStatus: apt.confirmationStatus
