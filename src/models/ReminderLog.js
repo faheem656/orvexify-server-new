@@ -26,7 +26,7 @@ const reminderLogSchema = new mongoose.Schema({
   },
   reminderType: {
     type: String,
-    enum: ["24h", "2h"],
+    enum: ["24h", "2h", "30min"],
     required: true,
   },
   sentAt: {

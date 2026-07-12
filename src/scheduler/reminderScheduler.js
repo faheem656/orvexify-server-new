@@ -1,4 +1,4 @@
-// src/scheduler/reminderScheduler.js — Updated with better status handling
+// src/scheduler/reminderScheduler.js — COMPLETE FIXED VERSION
 
 const cron = require("node-cron");
 const moment = require("moment-timezone");
@@ -78,20 +78,49 @@ const shouldSendReminder = (
 
 // ============ CHECK IF APPOINTMENT IS ELIGIBLE FOR REMINDER ============
 const isAppointmentEligible = (appointment, reminderType) => {
-  // ✅ If cancelled, never send any reminder
+  // ❌ If cancelled, never send any reminder
   if (appointment.confirmationStatus === "cancelled") {
+    console.log(`  ❌ Appointment is cancelled, not eligible for any reminder`);
     return false;
   }
 
-  // ✅ If confirmed, only send 30-minute reminder (optional)
+  // ✅ If confirmed, only send 30-minute reminder
   if (appointment.confirmationStatus === "confirmed") {
-    // ✅ Only allow 30min reminder for confirmed appointments
+    console.log(`  ✅ Appointment is confirmed, only 30min reminder allowed`);
     return reminderType === "30min";
   }
 
-  // ✅ For pending and no_response, allow all reminders
+  // ✅ For pending and no_response, allow based on previous cancellations
   const eligibleStatuses = ["pending", "no_response"];
-  return eligibleStatuses.includes(appointment.confirmationStatus);
+  if (!eligibleStatuses.includes(appointment.confirmationStatus)) {
+    console.log(`  ❌ Not eligible: status is ${appointment.confirmationStatus}`);
+    return false;
+  }
+
+  // ✅ Check if previous reminders were cancelled
+  if (reminderType === "2h") {
+    // 2h reminder: Send ONLY IF 24h was NOT cancelled
+    if (appointment.reminder24hCancelled === true) {
+      console.log(`  ❌ 24h reminder was cancelled, skipping 2h reminder`);
+      return false;
+    }
+    console.log(`  ✅ 2h reminder: 24h was not cancelled, eligible`);
+    return true;
+  }
+
+  if (reminderType === "30min") {
+    // 30min reminder: Send ONLY IF 24h AND 2h were NOT cancelled
+    if (appointment.reminder24hCancelled === true || appointment.reminder2hCancelled === true) {
+      console.log(`  ❌ 24h or 2h reminder was cancelled, skipping 30min reminder`);
+      return false;
+    }
+    console.log(`  ✅ 30min reminder: 24h and 2h not cancelled, eligible`);
+    return true;
+  }
+
+  // ✅ 24h reminder: Always send if not cancelled
+  console.log(`  ✅ 24h reminder: Eligible`);
+  return true;
 };
 
 // ============ PROCESS PENDING REMINDERS ============
@@ -111,30 +140,22 @@ const processPendingReminders = async () => {
       try {
         const appointment = await Appointment.findById(log.appointmentId);
         if (!appointment) {
-          console.log(
-            `❌ Appointment not found for log ${log._id}, marking as failed`,
-          );
+          console.log(`❌ Appointment not found for log ${log._id}, marking as failed`);
           log.emailStatus = "failed";
           log.errorMessage = "Appointment not found";
           await log.save();
           continue;
         }
 
-        // ✅ Check if already confirmed or cancelled
-        if (
-          appointment.confirmationStatus === "confirmed" ||
-          appointment.confirmationStatus === "cancelled"
-        ) {
-          console.log(
-            `⏭️ Appointment ${appointment._id} already ${appointment.confirmationStatus}, skipping`,
-          );
+        if (appointment.confirmationStatus === "confirmed" || 
+            appointment.confirmationStatus === "cancelled") {
+          console.log(`⏭️ Appointment ${appointment._id} already ${appointment.confirmationStatus}, skipping`);
           log.emailStatus = "skipped";
           log.errorMessage = `Appointment already ${appointment.confirmationStatus}`;
           await log.save();
           continue;
         }
 
-        // ✅ Get patient, doctor, clinic
         const [patient, doctor, clinic] = await Promise.all([
           Patient.findById(appointment.patientId),
           Doctor.findById(appointment.doctorId),
@@ -207,9 +228,7 @@ const processPendingReminders = async () => {
           log.retryCount = 0;
           log.errorMessage = null;
           await log.save();
-          console.log(
-            `✅ Pending reminder sent successfully for log ${log._id}`,
-          );
+          console.log(`✅ Pending reminder sent successfully for log ${log._id}`);
 
           if (log.reminderType === "24h" && !appointment.reminder24hSent) {
             appointment.reminder24hSent = true;
@@ -217,10 +236,7 @@ const processPendingReminders = async () => {
           } else if (log.reminderType === "2h" && !appointment.reminder2hSent) {
             appointment.reminder2hSent = true;
             appointment.reminder2hLogId = log._id;
-          } else if (
-            log.reminderType === "30min" &&
-            !appointment.reminder30minSent
-          ) {
+          } else if (log.reminderType === "30min" && !appointment.reminder30minSent) {
             appointment.reminder30minSent = true;
             appointment.reminder30minLogId = log._id;
           }
@@ -233,23 +249,17 @@ const processPendingReminders = async () => {
 
           if (log.retryCount >= 3) {
             log.emailStatus = "failed";
-            console.log(
-              `❌ Pending reminder failed after 3 retries for log ${log._id}`,
-            );
+            console.log(`❌ Pending reminder failed after 3 retries for log ${log._id}`);
           } else {
-            console.log(
-              `🔄 Pending reminder retry ${log.retryCount}/3 for log ${log._id}`,
-            );
+            console.log(`🔄 Pending reminder retry ${log.retryCount}/3 for log ${log._id}`);
           }
           await log.save();
         }
       } catch (error) {
         console.error(`❌ Error processing pending log ${log._id}:`, error);
-
         log.retryCount = (log.retryCount || 0) + 1;
         log.lastRetryAt = new Date();
         log.errorMessage = error.message || "Unknown error";
-
         if (log.retryCount >= 3) {
           log.emailStatus = "failed";
         }
@@ -263,30 +273,20 @@ const processPendingReminders = async () => {
   }
 };
 
-// ============ PROCESS REMINDER WITH RETRY ============
+// ============ PROCESS REMINDER ============
 const processReminder = async (apt, reminderType) => {
   try {
     const reminderLabel = reminderType === "30min" ? "30-minute" : reminderType;
-    console.log(
-      `📧 Processing ${reminderLabel} reminder for appointment ${apt._id}`,
-    );
+    console.log(`\n📧 Processing ${reminderLabel} reminder for appointment ${apt._id}`);
 
-    // ✅ Check if appointment is eligible for this specific reminder type
+    // ✅ Check if appointment is eligible
     if (!isAppointmentEligible(apt, reminderType)) {
-      console.log(
-        `⏭️ Skipping ${reminderLabel} reminder: Appointment status is ${apt.confirmationStatus} (not eligible for ${reminderType})`,
-      );
-      return {
-        success: false,
-        error: `Appointment status is ${apt.confirmationStatus}`,
-        skipped: true,
-      };
+      console.log(`⏭️ Skipping ${reminderLabel} reminder: Not eligible`);
+      return { success: false, error: `Not eligible`, skipped: true };
     }
 
     if (apt.reminderRetryCount >= 3) {
-      console.log(
-        `⏭️ Skipping ${reminderLabel} reminder: Max retries reached (${apt.reminderRetryCount})`,
-      );
+      console.log(`⏭️ Skipping ${reminderLabel} reminder: Max retries reached`);
       return { success: false, error: "Max retries reached", skipped: true };
     }
 
@@ -329,9 +329,7 @@ const processReminder = async (apt, reminderType) => {
     );
 
     if (!shouldSend) {
-      console.log(
-        `⏭️ Skipping ${reminderLabel} reminder: Not in correct time window`,
-      );
+      console.log(`⏭️ Skipping ${reminderLabel} reminder: Not in correct time window`);
       return { success: false, error: "Not in time window", skipped: true };
     }
 
@@ -415,40 +413,18 @@ const processReminder = async (apt, reminderType) => {
       log.lastRetryAt = new Date();
       await log.save();
 
-      console.log(
-        `❌ Failed to send ${reminderLabel} reminder to ${patient.email}: ${result.error}`,
-      );
-      console.log(
-        `🔄 Retry ${apt.reminderRetryCount}/3 for appointment ${apt._id}`,
-      );
-      return {
-        success: false,
-        error: result.error,
-        retryCount: apt.reminderRetryCount,
-      };
+      console.log(`❌ Failed to send ${reminderLabel} reminder to ${patient.email}: ${result.error}`);
+      return { success: false, error: result.error, retryCount: apt.reminderRetryCount };
     }
   } catch (error) {
     console.error(`❌ Error processing reminder:`, error);
-
-    try {
-      apt.reminderRetryCount = (apt.reminderRetryCount || 0) + 1;
-      apt.lastReminderAttempt = new Date();
-      await apt.save();
-    } catch (saveError) {
-      console.error("❌ Failed to update retry count:", saveError);
-    }
-
-    return {
-      success: false,
-      error: error.message,
-      retryCount: apt.reminderRetryCount,
-    };
+    return { success: false, error: error.message };
   }
 };
 
 // ============ PROCESS 24H REMINDERS ============
 const process24hReminders = async () => {
-  console.log("🔄 Processing 24h reminders...");
+  console.log("\n🔄 Processing 24h reminders...");
 
   try {
     const clinics = await User.find({
@@ -458,26 +434,23 @@ const process24hReminders = async () => {
     for (const clinic of clinics) {
       const timezone = clinic.timezone || "Asia/Karachi";
       const now = moment().tz(timezone);
-
-      const tomorrow = now.clone().add(1, "day");
-      const targetDate = tomorrow.format("YYYY-MM-DD");
       const todayDate = now.format("YYYY-MM-DD");
+      const tomorrowDate = now.clone().add(1, "day").format("YYYY-MM-DD");
 
       console.log(`📍 Clinic: ${clinic.clinicName} (${timezone})`);
-      console.log(`📅 Today: ${todayDate}, Tomorrow: ${targetDate}`);
+      console.log(`📅 Today: ${todayDate}, Tomorrow: ${tomorrowDate}`);
 
-      // ✅ Only get appointments that are eligible (pending or no_response)
+      // ✅ 24h reminder: All pending/no_response appointments
       const appointments = await Appointment.find({
         userId: clinic._id,
         status: { $in: ["scheduled", "confirmed"] },
-        confirmationStatus: { $in: ["pending", "no_response"] }, // ✅ Only pending/no_response
+        confirmationStatus: { $in: ["pending", "no_response"] },
         reminder24hSent: false,
-        $or: [{ appointmentDate: targetDate }, { appointmentDate: todayDate }],
-        $or: [
-          { reminderRetryCount: { $lt: 3 } },
-          { reminderRetryCount: { $exists: false } },
-        ],
+        appointmentDate: { $in: [todayDate, tomorrowDate] },
+        reminderRetryCount: { $lt: 3 },
       });
+
+      console.log(`📋 Total appointments found: ${appointments.length}`);
 
       const eligibleAppointments = appointments.filter((apt) => {
         return shouldSendReminder(
@@ -488,18 +461,9 @@ const process24hReminders = async () => {
         );
       });
 
-      console.log(
-        `📋 Found ${eligibleAppointments.length} appointments for 24h reminders`,
-      );
+      console.log(`📋 Found ${eligibleAppointments.length} appointments for 24h reminders`);
 
       for (const apt of eligibleAppointments) {
-        // ✅ Double-check eligibility
-        if (!isAppointmentEligible(apt)) {
-          console.log(
-            `⏭️ Skipping ${apt._id}: Not eligible (${apt.confirmationStatus})`,
-          );
-          continue;
-        }
         await processReminder(apt, "24h");
       }
     }
@@ -510,7 +474,7 @@ const process24hReminders = async () => {
 
 // ============ PROCESS 2H REMINDERS ============
 const process2hReminders = async () => {
-  console.log("🔄 Processing 2h reminders...");
+  console.log("\n🔄 Processing 2h reminders...");
 
   try {
     const clinics = await User.find({
@@ -526,50 +490,31 @@ const process2hReminders = async () => {
       console.log(`📅 Today: ${todayDate}`);
       console.log(`🕐 Current Time: ${now.format("HH:mm")}`);
 
-      // ✅ 2h reminder: Only pending and no_response (NOT confirmed)
+      // ✅ 2h reminder: Only if 24h was NOT cancelled
       const appointments = await Appointment.find({
         userId: clinic._id,
         status: { $in: ["scheduled", "confirmed"] },
-        confirmationStatus: { $in: ["pending", "no_response"] }, // ✅ NO confirmed
+        confirmationStatus: { $in: ["pending", "no_response"] },
         reminder2hSent: false,
         appointmentDate: todayDate,
-        $or: [
-          { reminderRetryCount: { $lt: 3 } },
-          { reminderRetryCount: { $exists: false } },
-        ],
+        reminderRetryCount: { $lt: 3 },
+        reminder24hCancelled: { $ne: true }, // ✅ Skip if 24h cancelled
       });
 
       console.log(`📋 Total appointments found: ${appointments.length}`);
 
       const eligibleAppointments = appointments.filter((apt) => {
-        const shouldSend = shouldSendReminder(
+        return shouldSendReminder(
           apt.appointmentDate,
           apt.appointmentTime,
           "2h",
           timezone,
         );
-
-        if (shouldSend) {
-          console.log(
-            `✅ Appointment ${apt._id} at ${apt.appointmentTime} is eligible for 2h reminder`,
-          );
-        }
-
-        return shouldSend;
       });
 
-      console.log(
-        `📋 Found ${eligibleAppointments.length} appointments for 2h reminders`,
-      );
+      console.log(`📋 Found ${eligibleAppointments.length} appointments for 2h reminders`);
 
       for (const apt of eligibleAppointments) {
-        // ✅ Double-check eligibility
-        if (!isAppointmentEligible(apt)) {
-          console.log(
-            `⏭️ Skipping ${apt._id}: Not eligible (${apt.confirmationStatus})`,
-          );
-          continue;
-        }
         await processReminder(apt, "2h");
       }
     }
@@ -580,7 +525,7 @@ const process2hReminders = async () => {
 
 // ============ PROCESS 30-MINUTE REMINDERS ============
 const process30minReminders = async () => {
-  console.log("🔄 Processing 30-minute reminders...");
+  console.log("\n🔄 Processing 30-minute reminders...");
 
   try {
     const clinics = await User.find({
@@ -596,59 +541,32 @@ const process30minReminders = async () => {
       console.log(`📅 Today: ${todayDate}`);
       console.log(`🕐 Current Time: ${now.format("HH:mm")}`);
 
-      // ✅ 30min reminder: Pending, no_response, AND confirmed
+      // ✅ 30min reminder: Only if 24h AND 2h were NOT cancelled
       const appointments = await Appointment.find({
         userId: clinic._id,
         status: { $in: ["scheduled", "confirmed"] },
-        confirmationStatus: { $in: ["pending", "no_response", "confirmed"] }, // ✅ INCLUDES confirmed
+        confirmationStatus: { $in: ["pending", "no_response", "confirmed"] },
         reminder30minSent: false,
         appointmentDate: todayDate,
-        $or: [
-          { reminderRetryCount: { $lt: 3 } },
-          { reminderRetryCount: { $exists: false } },
-        ],
+        reminderRetryCount: { $lt: 3 },
+        reminder24hCancelled: { $ne: true }, // ✅ Skip if 24h cancelled
+        reminder2hCancelled: { $ne: true }, // ✅ Skip if 2h cancelled
       });
 
-      console.log(
-        `📋 Total appointments found for 30-min check: ${appointments.length}`,
-      );
+      console.log(`📋 Total appointments found: ${appointments.length}`);
 
       const eligibleAppointments = appointments.filter((apt) => {
-        const shouldSend = shouldSendReminder(
+        return shouldSendReminder(
           apt.appointmentDate,
           apt.appointmentTime,
           "30min",
           timezone,
         );
-
-        if (shouldSend) {
-          const time24 = convertTo24Hour(apt.appointmentTime);
-          const aptMoment = moment.tz(
-            `${apt.appointmentDate} ${time24}`,
-            "YYYY-MM-DD HH:mm",
-            timezone,
-          );
-          const minutesLeft = aptMoment.diff(now, "minutes");
-          console.log(
-            `✅ Appointment ${apt._id} at ${apt.appointmentTime} is eligible for 30-min reminder (${minutesLeft} minutes left)`,
-          );
-        }
-
-        return shouldSend;
       });
 
-      console.log(
-        `📋 Found ${eligibleAppointments.length} appointments for 30-minute reminders`,
-      );
+      console.log(`📋 Found ${eligibleAppointments.length} appointments for 30-minute reminders`);
 
       for (const apt of eligibleAppointments) {
-        // ✅ Double-check eligibility
-        if (!isAppointmentEligible(apt)) {
-          console.log(
-            `⏭️ Skipping ${apt._id}: Not eligible (${apt.confirmationStatus})`,
-          );
-          continue;
-        }
         await processReminder(apt, "30min");
       }
     }
@@ -659,7 +577,7 @@ const process30minReminders = async () => {
 
 // ============ PROCESS NO-RESPONSE FOLLOW-UPS ============
 const processNoResponseFollowups = async () => {
-  console.log("🔄 Processing no-response follow-ups...");
+  console.log("\n🔄 Processing no-response follow-ups...");
 
   try {
     const now = moment();
@@ -669,16 +587,9 @@ const processNoResponseFollowups = async () => {
       status: "scheduled",
       confirmationStatus: "pending",
       appointmentDate: todayDate,
-      $or: [
-        { reminder24hSent: true },
-        { reminder2hSent: true },
-        { reminder30minSent: true },
-      ],
     });
 
-    console.log(
-      `📋 Found ${appointments.length} appointments to check for no-response`,
-    );
+    console.log(`📋 Found ${appointments.length} appointments to check for no-response`);
 
     for (const apt of appointments) {
       const logs = await ReminderLog.find({
@@ -696,9 +607,7 @@ const processNoResponseFollowups = async () => {
           const timeSinceLast = now.diff(moment(lastLog.sentAt), "minutes");
 
           if (timeSinceLast > 30) {
-            console.log(
-              `⏳ No response for appointment ${apt._id}, marking as no_response`,
-            );
+            console.log(`⏳ No response for appointment ${apt._id}, marking as no_response`);
             apt.confirmationStatus = "no_response";
             await apt.save();
 
@@ -736,29 +645,20 @@ const cleanupOldLogs = async () => {
 // ============ MAIN SCHEDULER ============
 const runScheduler = async () => {
   try {
-    console.log(
-      "🔄 Running reminder scheduler...",
-      new Date().toLocaleString(),
-    );
+    console.log(`\n🔄 Running reminder scheduler... ${new Date().toLocaleString()}`);
 
-    // ✅ Process pending reminders FIRST
     await processPendingReminders();
-
-    // ✅ Process all reminder types
     await process24hReminders();
     await process2hReminders();
     await process30minReminders();
     await processNoResponseFollowups();
 
-    // ✅ Cleanup old logs daily at midnight
     const hour = new Date().getHours();
     if (hour === 0) {
       await cleanupOldLogs();
     }
 
-    console.log(
-      `✅ Reminder scheduler completed at ${new Date().toLocaleString()}`,
-    );
+    console.log(`\n✅ Reminder scheduler completed at ${new Date().toLocaleString()}\n`);
   } catch (error) {
     console.error("❌ Reminder scheduler error:", error);
   }
@@ -780,5 +680,5 @@ module.exports = {
   cleanupOldLogs,
   processReminder,
   shouldSendReminder,
-  isAppointmentEligible, // ✅ New export
+  isAppointmentEligible,
 };

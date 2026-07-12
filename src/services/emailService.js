@@ -735,7 +735,7 @@ const sendReminderEmail = async (
         
         <!-- Footer -->
         <div class="footer">
-          <p style="margin: 0 0 4px;">This is an automated email. Please do not reply.</p>
+          
           <p style="margin: 0;">
             <a href="${baseUrl}/privacy">Privacy Policy</a>
             &nbsp;|&nbsp;
