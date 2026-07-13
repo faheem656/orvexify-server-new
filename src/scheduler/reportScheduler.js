@@ -1,4 +1,4 @@
-// src/scheduler/reportScheduler.js — Create this file
+// src/scheduler/reportScheduler.js — Complete Fixed Version
 
 const cron = require('node-cron');
 const moment = require('moment-timezone');
@@ -7,7 +7,7 @@ const Appointment = require('../models/Appointment');
 const Patient = require('../models/Patient');
 const Doctor = require('../models/Doctor');
 const ReminderLog = require('../models/ReminderLog');
-const { sendEmailFromClinic } = require('../services/emailService');
+const { sendEmailFromClinic, getUserEmailSettings } = require('../services/emailService');
 
 // ============ GENERATE DAILY REPORT ============
 const generateDailyReport = async (userId, timezone) => {
@@ -143,7 +143,7 @@ const generateWeeklyReport = async (userId, timezone) => {
       };
     }).sort((a, b) => b.total - a.total);
 
-    // ✅ Get reminder logs
+    // ✅ Get reminder logs with new status object
     const reminderLogs = await ReminderLog.find({
       userId: userId,
       sentAt: { $gte: weekStart.toDate(), $lte: weekEnd.toDate() }
@@ -152,6 +152,8 @@ const generateWeeklyReport = async (userId, timezone) => {
     const totalReminders = reminderLogs.length;
     const openedReminders = reminderLogs.filter(l => l.opened === true).length;
     const clickedReminders = reminderLogs.filter(l => l.clicked === true).length;
+    const deliveredReminders = reminderLogs.filter(l => l.status?.current === 'delivered').length;
+    const failedReminders = reminderLogs.filter(l => l.status?.current === 'failed').length;
 
     // ✅ Get clinic details
     const clinic = await User.findById(userId);
@@ -174,9 +176,12 @@ const generateWeeklyReport = async (userId, timezone) => {
       doctorPerformance: doctorPerformance.slice(0, 5),
       reminders: {
         total: totalReminders,
+        delivered: deliveredReminders,
         opened: openedReminders,
         clicked: clickedReminders,
-        openRate: totalReminders > 0 ? Math.round((openedReminders / totalReminders) * 100) : 0
+        failed: failedReminders,
+        openRate: totalReminders > 0 ? Math.round((openedReminders / totalReminders) * 100) : 0,
+        clickRate: totalReminders > 0 ? Math.round((clickedReminders / totalReminders) * 100) : 0
       },
       topDoctors: doctorPerformance.slice(0, 3)
     };
@@ -199,7 +204,7 @@ const sendDailyReport = async (clinic) => {
     }
 
     // ✅ Get clinic email settings
-    const settings = await require('../services/emailService').getUserEmailSettings(userId);
+    const settings = await getUserEmailSettings(userId);
     if (!settings) {
       console.log(`❌ No email configured for clinic: ${clinic.email}`);
       return;
@@ -243,13 +248,11 @@ const sendDailyReport = async (clinic) => {
       </head>
       <body>
         <div class="container">
-          <!-- Header -->
           <div class="header">
             <h1>📋 Daily Appointment Report</h1>
             <p>${report.clinicName} · ${report.date}</p>
           </div>
           
-          <!-- Content -->
           <div class="content">
             <h2>Today's Summary</h2>
             <div class="stats-grid">
@@ -279,7 +282,6 @@ const sendDailyReport = async (clinic) => {
               </div>
             </div>
 
-            <!-- Time Slots -->
             <div style="margin: 16px 0; padding: 12px; background: #f8fafc; border-radius: 10px;">
               <p style="margin: 0; font-size: 14px; color: #475569;">
                 <strong>🕐 Time Breakdown:</strong> 
@@ -287,7 +289,6 @@ const sendDailyReport = async (clinic) => {
               </p>
             </div>
 
-            <!-- Today's Appointments -->
             <h3>Today's Appointments</h3>
             <div class="appointment-list">
               ${report.appointments.length > 0 ? report.appointments.map(apt => `
@@ -302,7 +303,6 @@ const sendDailyReport = async (clinic) => {
               `).join('') : '<p style="color: #94a3b8; text-align: center;">No appointments today 🎉</p>'}
             </div>
 
-            <!-- Tomorrow Preview -->
             ${report.hasTomorrow ? `
               <div class="tomorrow-preview">
                 <p style="margin: 0; font-weight: 600;">📅 Tomorrow Preview (${report.tomorrowCount} appointments)</p>
@@ -317,11 +317,10 @@ const sendDailyReport = async (clinic) => {
             ` : ''}
 
             <div style="text-align: center; margin: 20px 0;">
-              <a href="${process.env.FRONTEND_URL  }/dashboard" class="btn">📊 View Full Dashboard</a>
+              <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard" class="btn">📊 View Full Dashboard</a>
             </div>
           </div>
           
-          <!-- Footer -->
           <div class="footer">
             <p>This is an automated daily report from Orvexify.</p>
             <p>&copy; ${new Date().getFullYear()} Orvexify. All rights reserved.</p>
@@ -331,7 +330,6 @@ const sendDailyReport = async (clinic) => {
       </html>
     `;
 
-    // ✅ Send email
     const subject = `📋 Daily Appointment Report - ${report.date}`;
     await sendEmailFromClinic(userId, clinic.email, subject, html);
 
@@ -353,13 +351,12 @@ const sendWeeklyReport = async (clinic) => {
       return;
     }
 
-    const settings = await require('../services/emailService').getUserEmailSettings(userId);
+    const settings = await getUserEmailSettings(userId);
     if (!settings) {
       console.log(`❌ No email configured for clinic: ${clinic.email}`);
       return;
     }
 
-    // ✅ Build weekly report email HTML
     const html = `
       <!DOCTYPE html>
       <html>
@@ -427,7 +424,6 @@ const sendWeeklyReport = async (clinic) => {
               </div>
             </div>
 
-            <!-- Daily Breakdown -->
             <h3>📅 Daily Breakdown</h3>
             <div class="day-breakdown">
               ${Object.entries(report.dailyBreakdown).map(([day, data]) => `
@@ -438,7 +434,6 @@ const sendWeeklyReport = async (clinic) => {
               `).join('')}
             </div>
 
-            <!-- Doctor Performance -->
             ${report.doctorPerformance.length > 0 ? `
               <h3>👨‍⚕️ Top Doctors</h3>
               <div class="doctor-list">
@@ -451,18 +446,20 @@ const sendWeeklyReport = async (clinic) => {
               </div>
             ` : ''}
 
-            <!-- Reminder Stats -->
             <div class="highlight">
               <h4 style="margin: 0;">📧 Reminder Performance</h4>
               <p style="margin: 4px 0; font-size: 14px;">
                 ${report.reminders.total} reminders sent · 
-                ${report.reminders.opened} opened · 
-                ${report.reminders.openRate}% open rate
+                ${report.reminders.opened} opened (${report.reminders.openRate}%) · 
+                ${report.reminders.clicked} clicked (${report.reminders.clickRate}%)
+              </p>
+              <p style="margin: 4px 0; font-size: 12px; color: #64748b;">
+                Delivered: ${report.reminders.delivered} · Failed: ${report.reminders.failed}
               </p>
             </div>
 
             <div style="text-align: center; margin: 20px 0;">
-              <a href="${process.env.FRONTEND_URL  }/dashboard" class="btn">📊 View Full Dashboard</a>
+              <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard" class="btn">📊 View Full Dashboard</a>
             </div>
           </div>
           
@@ -526,9 +523,7 @@ const runWeeklyReports = async () => {
 
 // ============ SCHEDULE CRON JOBS ============
 
-// ✅ Daily Report: Every day at 10:00 PM (22:00) in clinic's timezone
-// Note: Since each clinic has different timezone, we run at a fixed UTC time
-// and each clinic's timezone is handled inside the report generation
+// ✅ Daily Report: Every day at 10:00 PM (22:00)
 cron.schedule('0 22 * * *', async () => {
   console.log('🕐 Running scheduled daily reports...');
   await runDailyReports();

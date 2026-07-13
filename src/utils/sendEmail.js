@@ -1,29 +1,31 @@
-// src/utils/sendEmail.js — Add tracking
+// src/utils/sendEmail.js — Complete Fixed Version
 
-const crypto = require('crypto');
-const { sendEmail } = require('../config/email');
-const ReminderLog = require('../models/ReminderLog');
+const crypto = require("crypto");
+const { sendEmail } = require("../config/email");
+const ReminderLog = require("../models/ReminderLog");
 
-// Generate tracking token
+// ============ GENERATE TRACKING TOKEN ============
 const generateTrackingToken = () => {
-  return crypto.randomBytes(32).toString('hex');
+  return crypto.randomBytes(32).toString("hex");
 };
 
-// Send reminder email with tracking
-const sendReminderEmail = async (appointment, patient, doctor, clinic, reminderType, logId) => {
-  const clinicName = clinic.clinicName || 'Clinic';
-  const doctorName = doctor?.name || 'Doctor';
-  
-  // Generate tracking token for this email
+// ============ SEND REMINDER EMAIL WITH TRACKING ============
+const sendReminderEmail = async (
+  appointment,
+  patient,
+  doctor,
+  clinic,
+  reminderType,
+  logId,
+) => {
+  const clinicName = clinic.clinicName || "Clinic";
+  const doctorName = doctor?.name || "Doctor";
+
   const trackingToken = generateTrackingToken();
-  
-  // Tracking pixel URL (for open tracking)
-  const trackingPixelUrl = `${process.env.FRONTEND_URL}/api/track/open/${trackingToken}`;
-  
-  // Confirm and cancel links with tracking
-  const confirmLink = `${process.env.FRONTEND_URL}/confirm/${appointment.confirmationToken}?track=${trackingToken}`;
-  const cancelLink = `${process.env.FRONTEND_URL}/cancel/${appointment.cancellationToken}?track=${trackingToken}`;
-  
+  const trackingPixelUrl = `${process.env.FRONTEND_URL || "http://localhost:3000"}/api/track/open/${trackingToken}`;
+  const confirmLink = `${process.env.FRONTEND_URL || "http://localhost:3000"}/confirm/${appointment.confirmationToken}?track=${trackingToken}`;
+  const cancelLink = `${process.env.FRONTEND_URL || "http://localhost:3000"}/cancel/${appointment.cancellationToken}?track=${trackingToken}`;
+
   const html = `
     <!DOCTYPE html>
     <html>
@@ -66,8 +68,8 @@ const sendReminderEmail = async (appointment, patient, doctor, clinic, reminderT
           <p style="font-size: 12px; color: #64748b;">If you have any questions, please contact the clinic directly.</p>
         </div>
         <div class="footer">
-          <p>&copy; 2024 Orvexify. All rights reserved.</p>
-          <p><a href="${process.env.FRONTEND_URL}/privacy">Privacy Policy</a></p>
+          <p>&copy; ${new Date().getFullYear()} Orvexify. All rights reserved.</p>
+          <p><a href="${process.env.FRONTEND_URL || "http://localhost:3000"}/privacy">Privacy Policy</a></p>
         </div>
       </div>
       <!-- Tracking Pixel -->
@@ -75,19 +77,21 @@ const sendReminderEmail = async (appointment, patient, doctor, clinic, reminderT
     </body>
     </html>
   `;
-  
-  // Update log with tracking token
+
+  // ✅ FIXED: Update log with new status object
   await ReminderLog.findByIdAndUpdate(logId, {
-    trackingToken: trackingToken
+    trackingToken: trackingToken,
+    "status.current": "sent",
   });
-  
-  return await sendEmail(patient.email, `Appointment Reminder - ${clinicName}`, html);
+
+  return await sendEmail(
+    patient.email,
+    `Appointment Reminder - ${clinicName}`,
+    html,
+  );
 };
 
-
-
-
-
+// ============ SEND BOOKING CONFIRMATION ============
 const sendBookingConfirmation = async (to, name, date, time, clinicName) => {
   const html = `
     <!DOCTYPE html>
@@ -109,7 +113,7 @@ const sendBookingConfirmation = async (to, name, date, time, clinicName) => {
     <body>
       <div class="container">
         <div class="header">
-          <h1>${clinicName || 'Orvexify'}</h1>
+          <h1>${clinicName || "Orvexify"}</h1>
         </div>
         <div class="content">
           <h2>Hello ${name},</h2>
@@ -122,19 +126,17 @@ const sendBookingConfirmation = async (to, name, date, time, clinicName) => {
           <p style="margin-top: 20px; font-size: 14px;">Thank you for choosing us!</p>
         </div>
         <div class="footer">
-          <p>&copy; 2024 Orvexify. All rights reserved.</p>
+          <p>&copy; ${new Date().getFullYear()} Orvexify. All rights reserved.</p>
         </div>
       </div>
     </body>
     </html>
   `;
 
-  return await sendEmail(to, 'Appointment Confirmed - Orvexify', html);
+  return await sendEmail(to, "Appointment Confirmed - Orvexify", html);
 };
 
-
-
-// ✅ ============ SEND WELCOME EMAIL ============
+// ============ SEND WELCOME EMAIL ============
 const sendWelcomeEmail = async (to, name) => {
   const html = `
     <!DOCTYPE html>
@@ -164,20 +166,115 @@ const sendWelcomeEmail = async (to, name) => {
           <p style="margin-top: 20px;">Best regards,<br><strong>Orvexify Team</strong></p>
         </div>
         <div class="footer">
-          <p>&copy; 2024 Orvexify. All rights reserved.</p>
+          <p>&copy; ${new Date().getFullYear()} Orvexify. All rights reserved.</p>
         </div>
       </div>
     </body>
     </html>
   `;
 
-  return await sendEmail(to, 'Welcome to Orvexify!', html);
+  return await sendEmail(to, "Welcome to Orvexify!", html);
 };
 
+// ============ SEND CANCELLATION EMAIL ============
+const sendCancellationEmail = async (
+  to,
+  patientName,
+  clinicName,
+  appointmentDate,
+  appointmentTime,
+) => {
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Appointment Cancelled</title>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 500px; margin: 0 auto; background: #ffffff; }
+        .header { background: linear-gradient(135deg, #ef4444, #dc2626); padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .header h1 { color: white; margin: 0; font-size: 24px; }
+        .content { padding: 30px; background: #f8fafc; border-radius: 0 0 10px 10px; }
+        .details { background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 1px solid #e2e8f0; }
+        .footer { text-align: center; padding: 20px; color: #94a3b8; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header"><h1>${clinicName}</h1></div>
+        <div class="content">
+          <h2>Dear ${patientName},</h2>
+          <p>Your appointment has been <strong>cancelled</strong> as requested.</p>
+          <div class="details">
+            <p><strong>📅 Date:</strong> ${appointmentDate}</p>
+            <p><strong>⏰ Time:</strong> ${appointmentTime}</p>
+          </div>
+          <p>If you wish to reschedule, please contact the clinic directly.</p>
+          <p style="margin-top: 20px; font-size: 14px;">We hope to see you again soon!</p>
+        </div>
+        <div class="footer"><p>&copy; ${new Date().getFullYear()} Orvexify. All rights reserved.</p></div>
+      </div>
+    </body>
+    </html>
+  `;
 
-module.exports = { 
+  return await sendEmail(to, `Appointment Cancelled - ${clinicName}`, html);
+};
+
+// ============ SEND CONFIRMATION EMAIL ============
+const sendConfirmationEmail = async (
+  to,
+  patientName,
+  clinicName,
+  appointmentDate,
+  appointmentTime,
+  doctorName,
+) => {
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Appointment Confirmed</title>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 500px; margin: 0 auto; background: #ffffff; }
+        .header { background: linear-gradient(135deg, #22c55e, #16a34a); padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .header h1 { color: white; margin: 0; font-size: 24px; }
+        .content { padding: 30px; background: #f8fafc; border-radius: 0 0 10px 10px; }
+        .details { background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 1px solid #e2e8f0; }
+        .footer { text-align: center; padding: 20px; color: #94a3b8; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header"><h1>${clinicName}</h1></div>
+        <div class="content">
+          <h2>Dear ${patientName},</h2>
+          <p>Your appointment has been <strong>confirmed</strong>.</p>
+          <div class="details">
+            <p><strong>📅 Date:</strong> ${appointmentDate}</p>
+            <p><strong>⏰ Time:</strong> ${appointmentTime}</p>
+            ${doctorName ? `<p><strong>👨‍⚕️ Doctor:</strong> Dr. ${doctorName}</p>` : ""}
+          </div>
+          <p>We look forward to seeing you.</p>
+        </div>
+        <div class="footer"><p>&copy; ${new Date().getFullYear()} Orvexify. All rights reserved.</p></div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await sendEmail(to, `Appointment Confirmed - ${clinicName}`, html);
+};
+
+// ============ EXPORT ALL ============
+module.exports = {
+  sendEmail,
   sendWelcomeEmail,
-  sendEmail: sendEmail,
-  sendBookingConfirmation,  // ✅ ADD THIS
-  sendReminderEmail
+  sendBookingConfirmation,
+  sendReminderEmail,
+  sendCancellationEmail,
+  sendConfirmationEmail,
 };

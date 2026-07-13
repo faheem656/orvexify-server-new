@@ -27,14 +27,39 @@ router.get('/reminder-logs', protect, async (req, res) => {
       query.reminderType = type;
     }
     
-    // Filter by status
+    // ✅ FIXED: Filter by status (using new status object)
     if (status && status !== 'all') {
-      if (status === 'delivered') query.emailStatus = 'delivered';
-      else if (status === 'failed') query.emailStatus = 'failed';
-      else if (status === 'opened') query.opened = true;
-      else if (status === 'not_opened') query.opened = false;
-      else if (status === 'confirmed') query.clickedAction = 'confirm';
-      else if (status === 'cancelled') query.clickedAction = 'cancel';
+      switch (status) {
+        case 'pending':
+          query['status.current'] = 'pending';
+          break;
+        case 'sent':
+          query['status.current'] = 'sent';
+          break;
+        case 'delivered':
+          query['status.current'] = 'delivered';
+          break;
+        case 'failed':
+          query['status.current'] = 'failed';
+          break;
+        case 'opened':
+          query['status.current'] = 'opened';
+          break;
+        case 'clicked':
+          query['status.current'] = 'clicked';
+          break;
+        case 'confirmed':
+          query.clickedAction = 'confirm';
+          break;
+        case 'cancelled':
+          query.clickedAction = 'cancel';
+          break;
+        case 'no_response':
+          query['status.current'] = 'no_response';
+          break;
+        default:
+          break;
+      }
     }
     
     // Filter by date range
@@ -84,16 +109,19 @@ router.get('/reminder-logs', protect, async (req, res) => {
       );
     }
     
-    // Statistics
+    // ✅ FIXED: Statistics with new status object
     const allLogs = await ReminderLog.find({ userId: req.user._id }).lean();
     const stats = {
       totalSent: allLogs.length,
-      delivered: allLogs.filter(l => l.emailStatus === 'delivered').length,
-      failed: allLogs.filter(l => l.emailStatus === 'failed').length,
-      opened: allLogs.filter(l => l.opened === true).length,
+      pending: allLogs.filter(l => l.status?.current === 'pending').length,
+      sent: allLogs.filter(l => l.status?.current === 'sent').length,
+      delivered: allLogs.filter(l => l.status?.current === 'delivered').length,
+      failed: allLogs.filter(l => l.status?.current === 'failed').length,
+      opened: allLogs.filter(l => l.status?.current === 'opened' || l.opened === true).length,
+      clicked: allLogs.filter(l => l.status?.current === 'clicked' || l.clicked === true).length,
       confirmed: allLogs.filter(l => l.clickedAction === 'confirm').length,
       cancelled: allLogs.filter(l => l.clickedAction === 'cancel').length,
-      noResponse: allLogs.filter(l => l.emailStatus === 'no_response').length
+      noResponse: allLogs.filter(l => l.status?.current === 'no_response').length,
     };
     
     res.json({
@@ -113,14 +141,12 @@ router.get('/reminder-logs', protect, async (req, res) => {
   }
 });
 
-
-
 // ============ GET REMINDER LOGS BY APPOINTMENT ID ============
 router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res) => {
   try {
     const { appointmentId } = req.params;
     
-    // ✅ First verify appointment belongs to this user
+    // First verify appointment belongs to this user
     const appointment = await Appointment.findOne({ 
       _id: appointmentId, 
       userId: req.user._id 
@@ -133,17 +159,17 @@ router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res
       });
     }
     
-    // ✅ Get all logs for this appointment
+    // Get all logs for this appointment
     const logs = await ReminderLog.find({
       appointmentId: appointmentId,
       userId: req.user._id
     }).sort({ sentAt: -1 }).lean();
     
-    // ✅ Get patient and doctor details
+    // Get patient and doctor details
     const patient = await Patient.findById(appointment.patientId).lean();
     const doctor = await Doctor.findById(appointment.doctorId).lean();
     
-    // ✅ Enrich logs with patient and doctor info
+    // Enrich logs with patient and doctor info
     const enrichedLogs = logs.map(log => ({
       ...log,
       patient: patient || null,
@@ -157,18 +183,20 @@ router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res
       }
     }));
     
-    // ✅ Calculate statistics for this appointment
+    // ✅ FIXED: Calculate statistics with new status object
     const stats = {
       totalReminders: logs.length,
       sent24h: logs.filter(l => l.reminderType === '24h').length,
       sent2h: logs.filter(l => l.reminderType === '2h').length,
-      delivered: logs.filter(l => l.emailStatus === 'delivered').length,
-      opened: logs.filter(l => l.opened === true).length,
-      clicked: logs.filter(l => l.clicked === true).length,
+      sent30min: logs.filter(l => l.reminderType === '30min').length,
+      pending: logs.filter(l => l.status?.current === 'pending').length,
+      sent: logs.filter(l => l.status?.current === 'sent').length,
+      delivered: logs.filter(l => l.status?.current === 'delivered').length,
+      opened: logs.filter(l => l.status?.current === 'opened' || l.opened === true).length,
+      clicked: logs.filter(l => l.status?.current === 'clicked' || l.clicked === true).length,
       clickedAction: logs.find(l => l.clicked === true)?.clickedAction || null,
-      failed: logs.filter(l => l.emailStatus === 'failed').length,
-      pending: logs.filter(l => l.emailStatus === 'pending').length,
-      noResponse: logs.filter(l => l.emailStatus === 'no_response').length
+      failed: logs.filter(l => l.status?.current === 'failed').length,
+      noResponse: logs.filter(l => l.status?.current === 'no_response').length,
     };
     
     res.json({
@@ -209,8 +237,6 @@ router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res
   }
 });
 
-
-
 // ============ GET SINGLE REMINDER LOG ============
 router.get('/reminder-logs/:id', protect, async (req, res) => {
   try {
@@ -240,6 +266,92 @@ router.get('/reminder-logs/:id', protect, async (req, res) => {
   }
 });
 
+// ============ UPDATE LOG STATUS ============
+router.put('/reminder-logs/:id/status', protect, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const validStatuses = ['pending', 'sent', 'delivered', 'failed', 'opened', 'clicked', 'no_response'];
+    
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status. Must be one of: ' + validStatuses.join(', ')
+      });
+    }
+    
+    const log = await ReminderLog.findOne({ _id: req.params.id, userId: req.user._id });
+    
+    if (!log) {
+      return res.status(404).json({ success: false, message: 'Log not found' });
+    }
+    
+    // Use helper method to update status
+    await log.updateStatus(status);
+    
+    res.json({
+      success: true,
+      message: 'Status updated successfully',
+      log: log
+    });
+  } catch (error) {
+    console.error('Update log status error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// ============ MARK LOG AS OPENED ============
+router.post('/reminder-logs/:id/opened', protect, async (req, res) => {
+  try {
+    const log = await ReminderLog.findOne({ _id: req.params.id, userId: req.user._id });
+    
+    if (!log) {
+      return res.status(404).json({ success: false, message: 'Log not found' });
+    }
+    
+    await log.markOpened();
+    
+    res.json({
+      success: true,
+      message: 'Marked as opened',
+      log: log
+    });
+  } catch (error) {
+    console.error('Mark opened error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// ============ MARK LOG AS CLICKED ============
+router.post('/reminder-logs/:id/clicked', protect, async (req, res) => {
+  try {
+    const { action } = req.body;
+    
+    if (!action || !['confirm', 'cancel'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Action must be "confirm" or "cancel"'
+      });
+    }
+    
+    const log = await ReminderLog.findOne({ _id: req.params.id, userId: req.user._id });
+    
+    if (!log) {
+      return res.status(404).json({ success: false, message: 'Log not found' });
+    }
+    
+    await log.markClicked(action);
+    
+    res.json({
+      success: true,
+      message: 'Marked as clicked',
+      log: log
+    });
+  } catch (error) {
+    console.error('Mark clicked error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // ============ EXPORT LOGS ============
 router.get('/reminder-logs/export', protect, async (req, res) => {
   try {
@@ -250,6 +362,11 @@ router.get('/reminder-logs/export', protect, async (req, res) => {
     if (type && type !== 'all') query.reminderType = type;
     if (dateFrom) query.sentAt = { $gte: new Date(dateFrom) };
     if (dateTo) query.sentAt = { ...query.sentAt, $lte: new Date(dateTo) };
+    
+    // ✅ Status filter with new status object
+    if (status && status !== 'all') {
+      query['status.current'] = status;
+    }
     
     const logs = await ReminderLog.find(query).sort({ sentAt: -1 }).lean();
     
@@ -263,13 +380,15 @@ router.get('/reminder-logs/export', protect, async (req, res) => {
     const exportData = logs.map(log => ({
       'Patient Name': patientMap[log.patientId]?.name || 'N/A',
       'Patient Email': patientMap[log.patientId]?.email || 'N/A',
-      'Reminder Type': log.reminderType === '24h' ? '24 Hour' : '2 Hour',
+      'Reminder Type': log.reminderType === '24h' ? '24 Hour' : log.reminderType === '2h' ? '2 Hour' : '30 Minute',
       'Sent At': new Date(log.sentAt).toLocaleString(),
-      'Status': log.emailStatus,
+      'Status': log.status?.current || 'pending',
       'Opened': log.opened ? 'Yes' : 'No',
       'Opened At': log.openedAt ? new Date(log.openedAt).toLocaleString() : '-',
       'Action': log.clickedAction || 'None',
-      'Action At': log.clickedAt ? new Date(log.clickedAt).toLocaleString() : '-'
+      'Action At': log.clickedAt ? new Date(log.clickedAt).toLocaleString() : '-',
+      'Retry Count': log.retryCount || 0,
+      'Error': log.errorMessage || '-'
     }));
     
     res.json({ success: true, exportData });

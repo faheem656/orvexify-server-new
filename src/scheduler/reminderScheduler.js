@@ -99,7 +99,6 @@ const isAppointmentEligible = (appointment, reminderType) => {
 
   // ✅ Check if previous reminders were cancelled
   if (reminderType === "2h") {
-    // 2h reminder: Send ONLY IF 24h was NOT cancelled
     if (appointment.reminder24hCancelled === true) {
       console.log(`  ❌ 24h reminder was cancelled, skipping 2h reminder`);
       return false;
@@ -109,7 +108,6 @@ const isAppointmentEligible = (appointment, reminderType) => {
   }
 
   if (reminderType === "30min") {
-    // 30min reminder: Send ONLY IF 24h AND 2h were NOT cancelled
     if (appointment.reminder24hCancelled === true || appointment.reminder2hCancelled === true) {
       console.log(`  ❌ 24h or 2h reminder was cancelled, skipping 30min reminder`);
       return false;
@@ -118,7 +116,6 @@ const isAppointmentEligible = (appointment, reminderType) => {
     return true;
   }
 
-  // ✅ 24h reminder: Always send if not cancelled
   console.log(`  ✅ 24h reminder: Eligible`);
   return true;
 };
@@ -128,8 +125,12 @@ const processPendingReminders = async () => {
   console.log("🔄 Processing pending reminders...");
 
   try {
+    // ✅ FIXED: Using new status object
     const pendingLogs = await ReminderLog.find({
-      emailStatus: { $in: ["pending", "failed"] },
+      $or: [
+        { 'status.current': 'pending' },
+        { 'status.current': 'failed' }
+      ],
       retryCount: { $lt: 3 },
       sentAt: { $exists: true },
     }).sort({ sentAt: 1 });
@@ -141,7 +142,7 @@ const processPendingReminders = async () => {
         const appointment = await Appointment.findById(log.appointmentId);
         if (!appointment) {
           console.log(`❌ Appointment not found for log ${log._id}, marking as failed`);
-          log.emailStatus = "failed";
+          log.status.current = 'failed';
           log.errorMessage = "Appointment not found";
           await log.save();
           continue;
@@ -150,7 +151,7 @@ const processPendingReminders = async () => {
         if (appointment.confirmationStatus === "confirmed" || 
             appointment.confirmationStatus === "cancelled") {
           console.log(`⏭️ Appointment ${appointment._id} already ${appointment.confirmationStatus}, skipping`);
-          log.emailStatus = "skipped";
+          log.status.current = 'skipped';
           log.errorMessage = `Appointment already ${appointment.confirmationStatus}`;
           await log.save();
           continue;
@@ -164,7 +165,7 @@ const processPendingReminders = async () => {
 
         if (!patient || !doctor || !clinic) {
           console.log(`❌ Missing data for log ${log._id}`);
-          log.emailStatus = "failed";
+          log.status.current = 'failed';
           log.errorMessage = "Missing patient, doctor, or clinic";
           log.retryCount = (log.retryCount || 0) + 1;
           log.lastRetryAt = new Date();
@@ -174,7 +175,7 @@ const processPendingReminders = async () => {
 
         if (!clinic.smtpHost || !clinic.fromEmail || !clinic.emailPassword) {
           console.log(`❌ Clinic ${clinic._id} has no email configured`);
-          log.emailStatus = "failed";
+          log.status.current = 'failed';
           log.errorMessage = "Email not configured";
           log.retryCount = (log.retryCount || 0) + 1;
           log.lastRetryAt = new Date();
@@ -186,11 +187,11 @@ const processPendingReminders = async () => {
           log.trackingToken = generateTrackingToken();
         }
 
-        const baseUrl = process.env.FRONTEND_URL  ;
+        const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
         const trackingToken = log.trackingToken;
         const confirmLink = `${baseUrl}/confirm/${appointment.confirmationToken}?tracking=${trackingToken}&action=confirm`;
         const cancelLink = `${baseUrl}/cancel/${appointment.cancellationToken}?tracking=${trackingToken}&action=cancel`;
-        const trackingPixel = `${process.env.BACKEND_URL  }/api/tracking/pixel/${trackingToken}`;
+        const trackingPixel = `${process.env.BACKEND_URL || "http://localhost:5000"}/api/tracking/pixel/${trackingToken}`;
 
         let reminderLabelText = "";
         let urgencyLevel = "";
@@ -223,7 +224,7 @@ const processPendingReminders = async () => {
         );
 
         if (result.success) {
-          log.emailStatus = "delivered";
+          log.status.current = 'delivered';
           log.sentAt = new Date();
           log.retryCount = 0;
           log.errorMessage = null;
@@ -248,7 +249,7 @@ const processPendingReminders = async () => {
           log.errorMessage = result.error || "Unknown error";
 
           if (log.retryCount >= 3) {
-            log.emailStatus = "failed";
+            log.status.current = 'failed';
             console.log(`❌ Pending reminder failed after 3 retries for log ${log._id}`);
           } else {
             console.log(`🔄 Pending reminder retry ${log.retryCount}/3 for log ${log._id}`);
@@ -261,7 +262,7 @@ const processPendingReminders = async () => {
         log.lastRetryAt = new Date();
         log.errorMessage = error.message || "Unknown error";
         if (log.retryCount >= 3) {
-          log.emailStatus = "failed";
+          log.status.current = 'failed';
         }
         await log.save();
       }
@@ -279,7 +280,6 @@ const processReminder = async (apt, reminderType) => {
     const reminderLabel = reminderType === "30min" ? "30-minute" : reminderType;
     console.log(`\n📧 Processing ${reminderLabel} reminder for appointment ${apt._id}`);
 
-    // ✅ Check if appointment is eligible
     if (!isAppointmentEligible(apt, reminderType)) {
       console.log(`⏭️ Skipping ${reminderLabel} reminder: Not eligible`);
       return { success: false, error: `Not eligible`, skipped: true };
@@ -306,7 +306,6 @@ const processReminder = async (apt, reminderType) => {
       return { success: false, error: "Email not configured" };
     }
 
-    // ✅ Check if already sent
     if (reminderType === "24h" && apt.reminder24hSent) {
       console.log(`⏭️ 24h reminder already sent for ${apt._id}`);
       return { success: false, error: "Already sent", skipped: true };
@@ -334,22 +333,33 @@ const processReminder = async (apt, reminderType) => {
     }
 
     const trackingToken = generateTrackingToken();
+    
+    // ✅ FIXED: Using new status object
     const log = await ReminderLog.create({
       userId: apt.userId,
       appointmentId: apt._id,
       patientId: apt.patientId,
       doctorId: apt.doctorId,
       reminderType: reminderType,
-      emailStatus: "pending",
+      status: {
+        current: 'pending',
+        isPending: true,
+        isSent: false,
+        isDelivered: false,
+        isFailed: false,
+        isOpened: false,
+        isClicked: false,
+        isNoResponse: false
+      },
       trackingToken: trackingToken,
       sentAt: new Date(),
       retryCount: apt.reminderRetryCount || 0,
     });
 
-    const baseUrl = process.env.FRONTEND_URL  ;
+    const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
     const confirmLink = `${baseUrl}/confirm/${apt.confirmationToken}?tracking=${trackingToken}&action=confirm`;
     const cancelLink = `${baseUrl}/cancel/${apt.cancellationToken}?tracking=${trackingToken}&action=cancel`;
-    const trackingPixel = `${process.env.BACKEND_URL  }/api/tracking/pixel/${trackingToken}`;
+    const trackingPixel = `${process.env.BACKEND_URL || "http://localhost:5000"}/api/tracking/pixel/${trackingToken}`;
 
     let reminderLabelText = "";
     let urgencyLevel = "";
@@ -396,7 +406,7 @@ const processReminder = async (apt, reminderType) => {
       apt.lastReminderAttempt = new Date();
       await apt.save();
 
-      log.emailStatus = "delivered";
+      log.status.current = 'delivered';
       log.sentAt = new Date();
       await log.save();
 
@@ -407,7 +417,7 @@ const processReminder = async (apt, reminderType) => {
       apt.lastReminderAttempt = new Date();
       await apt.save();
 
-      log.emailStatus = "failed";
+      log.status.current = 'failed';
       log.errorMessage = result.error || "Unknown error";
       log.retryCount = apt.reminderRetryCount;
       log.lastRetryAt = new Date();
@@ -440,7 +450,6 @@ const process24hReminders = async () => {
       console.log(`📍 Clinic: ${clinic.clinicName} (${timezone})`);
       console.log(`📅 Today: ${todayDate}, Tomorrow: ${tomorrowDate}`);
 
-      // ✅ 24h reminder: All pending/no_response appointments
       const appointments = await Appointment.find({
         userId: clinic._id,
         status: { $in: ["scheduled", "confirmed"] },
@@ -490,7 +499,6 @@ const process2hReminders = async () => {
       console.log(`📅 Today: ${todayDate}`);
       console.log(`🕐 Current Time: ${now.format("HH:mm")}`);
 
-      // ✅ 2h reminder: Only if 24h was NOT cancelled
       const appointments = await Appointment.find({
         userId: clinic._id,
         status: { $in: ["scheduled", "confirmed"] },
@@ -498,7 +506,7 @@ const process2hReminders = async () => {
         reminder2hSent: false,
         appointmentDate: todayDate,
         reminderRetryCount: { $lt: 3 },
-        reminder24hCancelled: { $ne: true }, // ✅ Skip if 24h cancelled
+        reminder24hCancelled: { $ne: true },
       });
 
       console.log(`📋 Total appointments found: ${appointments.length}`);
@@ -541,7 +549,6 @@ const process30minReminders = async () => {
       console.log(`📅 Today: ${todayDate}`);
       console.log(`🕐 Current Time: ${now.format("HH:mm")}`);
 
-      // ✅ 30min reminder: Only if 24h AND 2h were NOT cancelled
       const appointments = await Appointment.find({
         userId: clinic._id,
         status: { $in: ["scheduled", "confirmed"] },
@@ -549,8 +556,8 @@ const process30minReminders = async () => {
         reminder30minSent: false,
         appointmentDate: todayDate,
         reminderRetryCount: { $lt: 3 },
-        reminder24hCancelled: { $ne: true }, // ✅ Skip if 24h cancelled
-        reminder2hCancelled: { $ne: true }, // ✅ Skip if 2h cancelled
+        reminder24hCancelled: { $ne: true },
+        reminder2hCancelled: { $ne: true },
       });
 
       console.log(`📋 Total appointments found: ${appointments.length}`);
@@ -592,9 +599,10 @@ const processNoResponseFollowups = async () => {
     console.log(`📋 Found ${appointments.length} appointments to check for no-response`);
 
     for (const apt of appointments) {
+      // ✅ FIXED: Using new status object
       const logs = await ReminderLog.find({
         appointmentId: apt._id,
-        emailStatus: { $in: ["delivered", "sent"] },
+        'status.current': { $in: ["delivered", "sent"] },
       });
 
       if (logs.length > 0) {
@@ -611,9 +619,10 @@ const processNoResponseFollowups = async () => {
             apt.confirmationStatus = "no_response";
             await apt.save();
 
+            // ✅ FIXED: Update all logs for this appointment
             await ReminderLog.updateMany(
               { appointmentId: apt._id },
-              { emailStatus: "no_response" },
+              { 'status.current': 'no_response' }
             );
           }
         }

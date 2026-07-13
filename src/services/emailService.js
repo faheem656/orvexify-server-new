@@ -21,11 +21,9 @@ const getUserEmailSettings = async (userId) => {
     console.log("  - fromEmail:", user.fromEmail ? "✅ Set" : "❌ Not set");
     console.log("  - emailPassword:", user.emailPassword ? "✅ Set" : "❌ Not set");
 
-    // ✅ If no SMTP settings, use default (development only)
     if (!user.smtpHost || !user.fromEmail || !user.emailPassword) {
       console.log("⚠️ No SMTP configured, using default settings...");
       
-      // ✅ Check if default env variables are set
       if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
         console.log("✅ Using default email settings from .env");
         return {
@@ -77,7 +75,6 @@ const getUserEmailSettings = async (userId) => {
   }
 };
 
-
 // ============ GENERATE TRACKING TOKEN ============
 const generateTrackingToken = () => {
   return crypto.randomBytes(32).toString("hex");
@@ -96,7 +93,7 @@ const createTransporter = (settings) => {
   return nodemailer.createTransport({
     host: settings.smtpHost,
     port: port,
-    secure: port === 465, // ✅ Port 465 = SSL, Port 587 = STARTTLS
+    secure: port === 465,
     auth: {
       user: settings.fromEmail,
       pass: settings.password,
@@ -109,7 +106,6 @@ const createTransporter = (settings) => {
     greetingTimeout: 10000,
   });
 };
-
 
 // ============ SEND EMAIL (UNIVERSAL) ============
 const sendEmailFromClinic = async (userId, to, subject, html, text = "") => {
@@ -148,7 +144,7 @@ const sendEmailFromClinic = async (userId, to, subject, html, text = "") => {
     }
 
     const info = await transporter.sendMail({
-      from: `"Orvexify" <${settings.fromEmail}>`,
+      from: `"${settings.fromName || 'Orvexify'}" <${settings.fromEmail}>`,
       to: to,
       subject: subject,
       text: text || html.replace(/<[^>]*>/g, ""),
@@ -289,7 +285,7 @@ const sendVerificationEmail = async (userId, to, name, code) => {
   console.log(`📧 Sending verification email to: ${to}`);
 
   const settings = await getUserEmailSettings(userId);
-  const clinicName =  "Orvexify";
+  const clinicName = settings?.fromName || "Orvexify";
 
   const html = `
     <!DOCTYPE html>
@@ -367,7 +363,6 @@ const sendBookingConfirmation = async (
         .content { padding: 30px; background: #f8fafc; border-radius: 0 0 10px 10px; }
         .details { background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 1px solid #e2e8f0; }
         .footer { text-align: center; padding: 20px; color: #94a3b8; font-size: 12px; }
-        .btn { display: inline-block; padding: 10px 24px; background: #3b82f6; color: white; text-decoration: none; border-radius: 8px; }
       </style>
     </head>
     <body>
@@ -398,7 +393,7 @@ const sendBookingConfirmation = async (
   );
 };
 
-// ============ SEND REMINDER EMAIL (WITH CSS BACKGROUND TRACKING) ============
+// ============ SEND REMINDER EMAIL ============
 const sendReminderEmail = async (
   userId,
   to,
@@ -424,10 +419,8 @@ const sendReminderEmail = async (
   to = String(to).trim();
   if (!to) return { success: false, error: "Invalid email" };
 
-  // ✅ Generate tracking token
   const trackingToken = generateTrackingToken();
 
-  // ✅ Save tracking token to log
   if (logId) {
     try {
       await ReminderLog.findByIdAndUpdate(logId, {
@@ -439,28 +432,20 @@ const sendReminderEmail = async (
     }
   }
 
-  // ✅ Get clinic settings
   const settings = await getUserEmailSettings(userId);
   const timezone = settings?.timezone || "Asia/Karachi";
-
-  // ✅ Pixel URL
-  const backendUrl = process.env.BACKEND_URL  ;
+  const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
   const pixelUrl = `${backendUrl}/api/tracking/pixel/${trackingToken}`;
 
   console.log(`📊 Tracking Pixel URL: ${pixelUrl}`);
 
-  // ✅ Format date
   const formattedDate = formatAppointmentDate(appointmentDate, timezone);
-
-  // ✅ Click tracking URLs
-  const baseUrl = process.env.FRONTEND_URL  ;
+  const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
   const confirmTrackingUrl = `${backendUrl}/api/tracking/click?tracking=${trackingToken}&action=confirm&redirect=${encodeURIComponent(confirmLink)}`;
   const cancelTrackingUrl = `${backendUrl}/api/tracking/click?tracking=${trackingToken}&action=cancel&redirect=${encodeURIComponent(cancelLink)}`;
 
-  // ✅ Generate CSS Background Tracking HTML
   const trackingHTML = generateTrackingHTML(pixelUrl, trackingToken);
 
-  // ============ URGENCY-BASED STYLING ============
   let urgencyStyles = {
     headerBg: 'linear-gradient(135deg, #3b82f6, #06b6d4)',
     badgeBg: '#3b82f6',
@@ -502,7 +487,6 @@ const sendReminderEmail = async (
     };
   }
 
-  // ============ EMAIL HTML WITH CSS BACKGROUND TRACKING ============
   const html = `
     <!DOCTYPE html>
     <html>
@@ -548,7 +532,6 @@ const sendReminderEmail = async (
           background: #ffffff;
         }
         
-        /* Urgency Badge */
         .urgency-badge {
           display: inline-block;
           background: ${urgencyStyles.badgeBg};
@@ -562,7 +545,6 @@ const sendReminderEmail = async (
           letter-spacing: 0.5px;
         }
         
-        /* Warning Box */
         .warning-box {
           background: #fef2f2;
           border: 2px solid #fecaca;
@@ -675,28 +657,22 @@ const sendReminderEmail = async (
     </head>
     <body>
       <div class="container">
-        <!-- Header -->
         <div class="header">
           <h1>${clinicName}</h1>
           <p>${urgencyStyles.urgencyEmoji} ${urgencyStyles.urgencyLabel}</p>
         </div>
         
-        <!-- Content -->
         <div class="content">
-          <!-- Urgency Badge -->
           <div style="text-align: center;">
             <span class="urgency-badge">${urgencyStyles.urgencyText || urgencyStyles.urgencyLabel}</span>
           </div>
           
-          <!-- Warning Box for 30-minute reminder -->
           <div class="warning-box">
             <p>${urgencyStyles.warningText}</p>
           </div>
           
-          <!-- Greeting -->
           <p class="greeting">Dear <strong>${patientName}</strong>,</p>
           
-          <!-- Appointment Details -->
           <div class="details">
             <p><strong>📅 Date:</strong> ${formattedDate}</p>
             <p><strong>⏰ Time:</strong> ${appointmentTime}</p>
@@ -704,13 +680,11 @@ const sendReminderEmail = async (
             <p><strong>📍 Clinic:</strong> ${clinicName}</p>
           </div>
           
-          <!-- Action Buttons -->
           <div class="button-group">
             <a href="${confirmTrackingUrl}" class="btn btn-confirm">✅ Confirm Appointment</a>
             <a href="${cancelTrackingUrl}" class="btn btn-cancel">❌ Cancel Appointment</a>
           </div>
           
-          <!-- Urgency-specific note -->
           ${urgencyLevel === 'high' ? `
           <div style="background: #fef2f2; border-radius: 8px; padding: 12px 16px; margin: 12px 0;">
             <p style="margin: 0; font-size: 13px; color: #991b1b; text-align: center;">
@@ -733,9 +707,7 @@ const sendReminderEmail = async (
           <div class="timezone-note">⏰ All times are in ${timezone}</div>
         </div>
         
-        <!-- Footer -->
         <div class="footer">
-          
           <p style="margin: 0;">
             <a href="${baseUrl}/privacy">Privacy Policy</a>
             &nbsp;|&nbsp;
@@ -745,7 +717,6 @@ const sendReminderEmail = async (
         </div>
       </div>
       
-      <!-- ✅ CSS BACKGROUND TRACKING - MOST RELIABLE METHOD -->
       ${trackingHTML}
     </body>
     </html>
@@ -753,7 +724,6 @@ const sendReminderEmail = async (
 
   console.log(`📤 Sending email with CSS Background tracking`);
 
-  // ✅ Determine email subject based on urgency
   let subject = `Appointment Reminder - ${clinicName}`;
   if (urgencyLevel === 'high') {
     subject = `⚠️ URGENT: Your appointment is in 30 minutes - ${clinicName}`;
@@ -761,7 +731,6 @@ const sendReminderEmail = async (
     subject = `🔔 2-Hour Reminder: Your appointment at ${clinicName}`;
   }
 
-  // ✅ Send email
   const result = await sendEmailFromClinic(
     userId,
     to,
@@ -769,11 +738,11 @@ const sendReminderEmail = async (
     html,
   );
 
-  // ✅ Update log with email status
+  // ✅ FIXED: Update log with new status object
   if (logId) {
     try {
       await ReminderLog.findByIdAndUpdate(logId, {
-        emailStatus: result.success ? "sent" : "failed",
+        'status.current': result.success ? 'sent' : 'failed',
         sentAt: new Date(),
         errorMessage: result.success ? null : result.error,
         reminderLabel: reminderLabel,
