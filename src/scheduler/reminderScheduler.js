@@ -186,11 +186,11 @@ const processPendingReminders = async () => {
           log.trackingToken = generateTrackingToken();
         }
 
-        const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+        const baseUrl = process.env.FRONTEND_URL  ;
         const trackingToken = log.trackingToken;
         const confirmLink = `${baseUrl}/confirm/${appointment.confirmationToken}?tracking=${trackingToken}&action=confirm`;
         const cancelLink = `${baseUrl}/cancel/${appointment.cancellationToken}?tracking=${trackingToken}&action=cancel`;
-        const trackingPixel = `${process.env.BACKEND_URL || "http://localhost:5000"}/api/tracking/pixel/${trackingToken}`;
+        const trackingPixel = `${process.env.BACKEND_URL  }/api/tracking/pixel/${trackingToken}`;
 
         let reminderLabelText = "";
         let urgencyLevel = "";
@@ -346,10 +346,10 @@ const processReminder = async (apt, reminderType) => {
       retryCount: apt.reminderRetryCount || 0,
     });
 
-    const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    const baseUrl = process.env.FRONTEND_URL  ;
     const confirmLink = `${baseUrl}/confirm/${apt.confirmationToken}?tracking=${trackingToken}&action=confirm`;
     const cancelLink = `${baseUrl}/cancel/${apt.cancellationToken}?tracking=${trackingToken}&action=cancel`;
-    const trackingPixel = `${process.env.BACKEND_URL || "http://localhost:5000"}/api/tracking/pixel/${trackingToken}`;
+    const trackingPixel = `${process.env.BACKEND_URL  }/api/tracking/pixel/${trackingToken}`;
 
     let reminderLabelText = "";
     let urgencyLevel = "";

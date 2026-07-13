@@ -317,7 +317,7 @@ const sendDailyReport = async (clinic) => {
             ` : ''}
 
             <div style="text-align: center; margin: 20px 0;">
-              <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard" class="btn">📊 View Full Dashboard</a>
+              <a href="${process.env.FRONTEND_URL  }/dashboard" class="btn">📊 View Full Dashboard</a>
             </div>
           </div>
           
@@ -462,7 +462,7 @@ const sendWeeklyReport = async (clinic) => {
             </div>
 
             <div style="text-align: center; margin: 20px 0;">
-              <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard" class="btn">📊 View Full Dashboard</a>
+              <a href="${process.env.FRONTEND_URL  }/dashboard" class="btn">📊 View Full Dashboard</a>
             </div>
           </div>
           

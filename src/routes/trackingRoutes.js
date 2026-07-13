@@ -95,7 +95,7 @@ router.get('/click', async (req, res) => {
           console.log(`✅ Appointment confirmed: ${appointment._id}`);
           
           // ✅ Redirect to confirmation success page with token
-          const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+          const frontendUrl = process.env.FRONTEND_URL  ;
           return res.redirect(`${frontendUrl}/confirm/${appointment.confirmationToken}?tracking=${tracking}&action=confirm&success=true`);
         }
       } else if (action === 'cancel') {
@@ -107,18 +107,18 @@ router.get('/click', async (req, res) => {
           console.log(`✅ Appointment cancelled: ${appointment._id}`);
           
           // ✅ Redirect to cancellation page
-          const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+          const frontendUrl = process.env.FRONTEND_URL  ;
           return res.redirect(`${frontendUrl}/cancel/${appointment.cancellationToken}?tracking=${tracking}&action=cancel&success=true`);
         }
       }
     }
 
     // ✅ Default redirect
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = process.env.FRONTEND_URL  ;
     return res.redirect(`${frontendUrl}/`);
   } catch (error) {
     console.error('❌ Tracking click error:', error);
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = process.env.FRONTEND_URL  ;
     return res.redirect(`${frontendUrl}/`);
   }
 });

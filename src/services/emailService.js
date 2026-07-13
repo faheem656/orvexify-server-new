@@ -444,7 +444,7 @@ const sendReminderEmail = async (
   const timezone = settings?.timezone || "Asia/Karachi";
 
   // ✅ Pixel URL
-  const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
+  const backendUrl = process.env.BACKEND_URL  ;
   const pixelUrl = `${backendUrl}/api/tracking/pixel/${trackingToken}`;
 
   console.log(`📊 Tracking Pixel URL: ${pixelUrl}`);
@@ -453,7 +453,7 @@ const sendReminderEmail = async (
   const formattedDate = formatAppointmentDate(appointmentDate, timezone);
 
   // ✅ Click tracking URLs
-  const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+  const baseUrl = process.env.FRONTEND_URL  ;
   const confirmTrackingUrl = `${backendUrl}/api/tracking/click?tracking=${trackingToken}&action=confirm&redirect=${encodeURIComponent(confirmLink)}`;
   const cancelTrackingUrl = `${backendUrl}/api/tracking/click?tracking=${trackingToken}&action=cancel&redirect=${encodeURIComponent(cancelLink)}`;
 
