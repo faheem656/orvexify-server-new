@@ -19,8 +19,11 @@ const integrationRoutes = require("./src/routes/integrationRoutes");
 const dns = require("dns");
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
-require("./src/scheduler/reminderScheduler");
+// ✅ 1. Load Queue System (No Redis)
+require('./src/queues/backupQueue');
 
+// ✅ 2. Load Cron Scheduler
+require('./src/scheduler/cronScheduler');
 dotenv.config();
 
 // Connect to MongoDB

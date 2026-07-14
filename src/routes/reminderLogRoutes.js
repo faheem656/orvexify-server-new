@@ -1,4 +1,5 @@
-// src/routes/reminderLogRoutes.js
+// src/routes/reminderLogRoutes.js — Complete with Boolean Fields
+
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
@@ -22,12 +23,11 @@ router.get('/reminder-logs', protect, async (req, res) => {
     
     let query = { userId: req.user._id };
     
-    // Filter by reminder type
     if (type && type !== 'all') {
       query.reminderType = type;
     }
     
-    // ✅ FIXED: Filter by status (using new status object)
+    // ✅ Status filter with boolean fields support
     if (status && status !== 'all') {
       switch (status) {
         case 'pending':
@@ -43,10 +43,14 @@ router.get('/reminder-logs', protect, async (req, res) => {
           query['status.current'] = 'failed';
           break;
         case 'opened':
-          query['status.current'] = 'opened';
+          // ✅ Check BOTH opened field AND status.current
+          query.$or = [
+            { opened: true },
+            { 'status.current': 'opened' }
+          ];
           break;
         case 'clicked':
-          query['status.current'] = 'clicked';
+          query.clicked = true;
           break;
         case 'confirmed':
           query.clickedAction = 'confirm';
@@ -62,7 +66,6 @@ router.get('/reminder-logs', protect, async (req, res) => {
       }
     }
     
-    // Filter by date range
     if (dateFrom) {
       query.sentAt = { $gte: new Date(dateFrom) };
     }
@@ -70,7 +73,6 @@ router.get('/reminder-logs', protect, async (req, res) => {
       query.sentAt = { ...query.sentAt, $lte: new Date(dateTo) };
     }
     
-    // Get logs with pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const logs = await ReminderLog.find(query)
       .sort({ sentAt: -1 })
@@ -80,26 +82,34 @@ router.get('/reminder-logs', protect, async (req, res) => {
     
     const total = await ReminderLog.countDocuments(query);
     
-    // Get patient details for each log
     const patientIds = [...new Set(logs.map(l => l.patientId))];
     const patients = await Patient.find({ _id: { $in: patientIds } }).lean();
     const patientMap = {};
     patients.forEach(p => patientMap[p._id] = p);
     
-    // Get appointment details
     const appointmentIds = [...new Set(logs.map(l => l.appointmentId))];
     const appointments = await Appointment.find({ _id: { $in: appointmentIds } }).lean();
     const appointmentMap = {};
     appointments.forEach(a => appointmentMap[a._id] = a);
     
-    // Combine data
+    // ✅ FIXED: Include ALL status fields including booleans
     const enrichedLogs = logs.map(log => ({
       ...log,
+      // ✅ Ensure status object has all boolean fields
+      status: {
+        current: log.status?.current || 'pending',
+        isPending: log.status?.isPending || false,
+        isSent: log.status?.isSent || false,
+        isDelivered: log.status?.isDelivered || false,
+        isFailed: log.status?.isFailed || false,
+        isOpened: log.status?.isOpened || false,
+        isClicked: log.status?.isClicked || false,
+        isNoResponse: log.status?.isNoResponse || false,
+      },
       patient: patientMap[log.patientId] || null,
       appointment: appointmentMap[log.appointmentId] || null
     }));
     
-    // Apply search filter
     let filteredLogs = enrichedLogs;
     if (search) {
       const searchLower = search.toLowerCase();
@@ -109,7 +119,7 @@ router.get('/reminder-logs', protect, async (req, res) => {
       );
     }
     
-    // ✅ FIXED: Statistics with new status object
+    // ✅ FIXED: Statistics with correct counts
     const allLogs = await ReminderLog.find({ userId: req.user._id }).lean();
     const stats = {
       totalSent: allLogs.length,
@@ -117,8 +127,8 @@ router.get('/reminder-logs', protect, async (req, res) => {
       sent: allLogs.filter(l => l.status?.current === 'sent').length,
       delivered: allLogs.filter(l => l.status?.current === 'delivered').length,
       failed: allLogs.filter(l => l.status?.current === 'failed').length,
-      opened: allLogs.filter(l => l.status?.current === 'opened' || l.opened === true).length,
-      clicked: allLogs.filter(l => l.status?.current === 'clicked' || l.clicked === true).length,
+      opened: allLogs.filter(l => l.opened === true || l.status?.current === 'opened').length,
+      clicked: allLogs.filter(l => l.clicked === true || l.status?.current === 'clicked').length,
       confirmed: allLogs.filter(l => l.clickedAction === 'confirm').length,
       cancelled: allLogs.filter(l => l.clickedAction === 'cancel').length,
       noResponse: allLogs.filter(l => l.status?.current === 'no_response').length,
@@ -146,7 +156,6 @@ router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res
   try {
     const { appointmentId } = req.params;
     
-    // First verify appointment belongs to this user
     const appointment = await Appointment.findOne({ 
       _id: appointmentId, 
       userId: req.user._id 
@@ -159,19 +168,27 @@ router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res
       });
     }
     
-    // Get all logs for this appointment
     const logs = await ReminderLog.find({
       appointmentId: appointmentId,
       userId: req.user._id
     }).sort({ sentAt: -1 }).lean();
     
-    // Get patient and doctor details
     const patient = await Patient.findById(appointment.patientId).lean();
     const doctor = await Doctor.findById(appointment.doctorId).lean();
     
-    // Enrich logs with patient and doctor info
+    // ✅ FIXED: Include ALL status fields including booleans
     const enrichedLogs = logs.map(log => ({
       ...log,
+      status: {
+        current: log.status?.current || 'pending',
+        isPending: log.status?.isPending || false,
+        isSent: log.status?.isSent || false,
+        isDelivered: log.status?.isDelivered || false,
+        isFailed: log.status?.isFailed || false,
+        isOpened: log.status?.isOpened || false,
+        isClicked: log.status?.isClicked || false,
+        isNoResponse: log.status?.isNoResponse || false,
+      },
       patient: patient || null,
       doctor: doctor || null,
       appointment: {
@@ -183,7 +200,6 @@ router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res
       }
     }));
     
-    // ✅ FIXED: Calculate statistics with new status object
     const stats = {
       totalReminders: logs.length,
       sent24h: logs.filter(l => l.reminderType === '24h').length,
@@ -192,8 +208,8 @@ router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res
       pending: logs.filter(l => l.status?.current === 'pending').length,
       sent: logs.filter(l => l.status?.current === 'sent').length,
       delivered: logs.filter(l => l.status?.current === 'delivered').length,
-      opened: logs.filter(l => l.status?.current === 'opened' || l.opened === true).length,
-      clicked: logs.filter(l => l.status?.current === 'clicked' || l.clicked === true).length,
+      opened: logs.filter(l => l.opened === true || l.status?.current === 'opened').length,
+      clicked: logs.filter(l => l.clicked === true || l.status?.current === 'clicked').length,
       clickedAction: logs.find(l => l.clicked === true)?.clickedAction || null,
       failed: logs.filter(l => l.status?.current === 'failed').length,
       noResponse: logs.filter(l => l.status?.current === 'no_response').length,
@@ -246,15 +262,25 @@ router.get('/reminder-logs/:id', protect, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Log not found' });
     }
     
-    // Get related data
     const patient = await Patient.findById(log.patientId).lean();
     const appointment = await Appointment.findById(log.appointmentId).lean();
     const doctor = await Doctor.findById(log.doctorId).lean();
     
+    // ✅ FIXED: Include ALL status fields including booleans
     res.json({
       success: true,
       log: {
         ...log,
+        status: {
+          current: log.status?.current || 'pending',
+          isPending: log.status?.isPending || false,
+          isSent: log.status?.isSent || false,
+          isDelivered: log.status?.isDelivered || false,
+          isFailed: log.status?.isFailed || false,
+          isOpened: log.status?.isOpened || false,
+          isClicked: log.status?.isClicked || false,
+          isNoResponse: log.status?.isNoResponse || false,
+        },
         patient,
         appointment,
         doctor
@@ -285,8 +311,16 @@ router.put('/reminder-logs/:id/status', protect, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Log not found' });
     }
     
-    // Use helper method to update status
-    await log.updateStatus(status);
+    // ✅ Update ALL status fields
+    log.status.current = status;
+    log.status.isPending = status === 'pending';
+    log.status.isSent = status === 'sent' || status === 'delivered' || status === 'opened' || status === 'clicked';
+    log.status.isDelivered = status === 'sent' || status === 'delivered' || status === 'opened' || status === 'clicked';
+    log.status.isFailed = status === 'failed';
+    log.status.isOpened = status === 'opened';
+    log.status.isClicked = status === 'clicked';
+    log.status.isNoResponse = status === 'no_response';
+    await log.save();
     
     res.json({
       success: true,
@@ -308,7 +342,19 @@ router.post('/reminder-logs/:id/opened', protect, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Log not found' });
     }
     
-    await log.markOpened();
+    // ✅ Update ALL fields
+    log.opened = true;
+    log.openedAt = new Date();
+    log.openedCount = (log.openedCount || 0) + 1;
+    log.status.current = 'opened';
+    log.status.isPending = false;
+    log.status.isSent = true;
+    log.status.isDelivered = true;
+    log.status.isFailed = false;
+    log.status.isOpened = true;
+    log.status.isClicked = false;
+    log.status.isNoResponse = false;
+    await log.save();
     
     res.json({
       success: true,
@@ -339,7 +385,20 @@ router.post('/reminder-logs/:id/clicked', protect, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Log not found' });
     }
     
-    await log.markClicked(action);
+    // ✅ Update ALL fields
+    log.clicked = true;
+    log.clickedAt = new Date();
+    log.clickedCount = (log.clickedCount || 0) + 1;
+    log.clickedAction = action;
+    log.status.current = 'clicked';
+    log.status.isPending = false;
+    log.status.isSent = true;
+    log.status.isDelivered = true;
+    log.status.isFailed = false;
+    log.status.isOpened = true;
+    log.status.isClicked = true;
+    log.status.isNoResponse = false;
+    await log.save();
     
     res.json({
       success: true,
@@ -363,26 +422,27 @@ router.get('/reminder-logs/export', protect, async (req, res) => {
     if (dateFrom) query.sentAt = { $gte: new Date(dateFrom) };
     if (dateTo) query.sentAt = { ...query.sentAt, $lte: new Date(dateTo) };
     
-    // ✅ Status filter with new status object
     if (status && status !== 'all') {
       query['status.current'] = status;
     }
     
     const logs = await ReminderLog.find(query).sort({ sentAt: -1 }).lean();
     
-    // Get patient details
     const patientIds = [...new Set(logs.map(l => l.patientId))];
     const patients = await Patient.find({ _id: { $in: patientIds } }).lean();
     const patientMap = {};
     patients.forEach(p => patientMap[p._id] = p);
     
-    // Format for CSV export
     const exportData = logs.map(log => ({
       'Patient Name': patientMap[log.patientId]?.name || 'N/A',
       'Patient Email': patientMap[log.patientId]?.email || 'N/A',
       'Reminder Type': log.reminderType === '24h' ? '24 Hour' : log.reminderType === '2h' ? '2 Hour' : '30 Minute',
       'Sent At': new Date(log.sentAt).toLocaleString(),
       'Status': log.status?.current || 'pending',
+      'Pending': log.status?.isPending ? 'Yes' : 'No',
+      'Sent': log.status?.isSent ? 'Yes' : 'No',
+      'Delivered': log.status?.isDelivered ? 'Yes' : 'No',
+      'Failed': log.status?.isFailed ? 'Yes' : 'No',
       'Opened': log.opened ? 'Yes' : 'No',
       'Opened At': log.openedAt ? new Date(log.openedAt).toLocaleString() : '-',
       'Action': log.clickedAction || 'None',
