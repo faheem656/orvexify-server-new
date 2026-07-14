@@ -1,4 +1,4 @@
-// src/routes/reminderLogRoutes.js — Complete with Boolean Fields
+// src/routes/reminderLogRoutes.js — Fixed Stats Calculation
 
 const express = require('express');
 const router = express.Router();
@@ -27,39 +27,35 @@ router.get('/reminder-logs', protect, async (req, res) => {
       query.reminderType = type;
     }
     
-    // ✅ Status filter with boolean fields support
+     // ✅ COMPLETE FIXED: ALL Boolean filters
     if (status && status !== 'all') {
       switch (status) {
         case 'pending':
-          query['status.current'] = 'pending';
+          query['status.isPending'] = true;  // ✅ Boolean
           break;
         case 'sent':
-          query['status.current'] = 'sent';
+          query['status.isSent'] = true;     // ✅ Boolean
           break;
         case 'delivered':
-          query['status.current'] = 'delivered';
+          query['status.isDelivered'] = true; // ✅ Boolean
           break;
         case 'failed':
-          query['status.current'] = 'failed';
+          query['status.isFailed'] = true;    // ✅ Boolean
           break;
         case 'opened':
-          // ✅ Check BOTH opened field AND status.current
-          query.$or = [
-            { opened: true },
-            { 'status.current': 'opened' }
-          ];
+          query['status.isOpened'] = true;    // ✅ Boolean
           break;
         case 'clicked':
-          query.clicked = true;
+          query['status.isClicked'] = true;   // ✅ Boolean
           break;
         case 'confirmed':
-          query.clickedAction = 'confirm';
+          query.clickedAction = 'confirm';    // ✅ Action filter
           break;
         case 'cancelled':
-          query.clickedAction = 'cancel';
+          query.clickedAction = 'cancel';     // ✅ Action filter
           break;
         case 'no_response':
-          query['status.current'] = 'no_response';
+          query['status.isNoResponse'] = true; // ✅ Boolean
           break;
         default:
           break;
@@ -95,7 +91,6 @@ router.get('/reminder-logs', protect, async (req, res) => {
     // ✅ FIXED: Include ALL status fields including booleans
     const enrichedLogs = logs.map(log => ({
       ...log,
-      // ✅ Ensure status object has all boolean fields
       status: {
         current: log.status?.current || 'pending',
         isPending: log.status?.isPending || false,
@@ -121,19 +116,21 @@ router.get('/reminder-logs', protect, async (req, res) => {
     
     // ✅ FIXED: Statistics with correct counts
     const allLogs = await ReminderLog.find({ userId: req.user._id }).lean();
+    
+    // ✅ Calculate stats properly
     const stats = {
       totalSent: allLogs.length,
-      pending: allLogs.filter(l => l.status?.current === 'pending').length,
-      sent: allLogs.filter(l => l.status?.current === 'sent').length,
-      delivered: allLogs.filter(l => l.status?.current === 'delivered').length,
-      failed: allLogs.filter(l => l.status?.current === 'failed').length,
-      opened: allLogs.filter(l => l.opened === true || l.status?.current === 'opened').length,
-      clicked: allLogs.filter(l => l.clicked === true || l.status?.current === 'clicked').length,
+      pending: allLogs.filter(l => l.status?.current === 'pending' || l.status?.isPending === true).length,
+      sent: allLogs.filter(l => l.status?.current === 'sent' || l.status?.isSent === true).length,
+      delivered: allLogs.filter(l => l.status?.isDelivered === true).length,  // ✅ FIXED
+      failed: allLogs.filter(l => l.status?.current === 'failed' || l.status?.isFailed === true).length,
+      opened: allLogs.filter(l => l.opened === true || l.status?.current === 'opened' || l.status?.isOpened === true).length,
+      clicked: allLogs.filter(l => l.clicked === true || l.status?.current === 'clicked' || l.status?.isClicked === true).length,
       confirmed: allLogs.filter(l => l.clickedAction === 'confirm').length,
       cancelled: allLogs.filter(l => l.clickedAction === 'cancel').length,
-      noResponse: allLogs.filter(l => l.status?.current === 'no_response').length,
+      noResponse: allLogs.filter(l => l.status?.current === 'no_response' || l.status?.isNoResponse === true).length,
     };
-    
+
     res.json({
       success: true,
       logs: filteredLogs,
@@ -176,7 +173,6 @@ router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res
     const patient = await Patient.findById(appointment.patientId).lean();
     const doctor = await Doctor.findById(appointment.doctorId).lean();
     
-    // ✅ FIXED: Include ALL status fields including booleans
     const enrichedLogs = logs.map(log => ({
       ...log,
       status: {
@@ -200,19 +196,20 @@ router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res
       }
     }));
     
+    // ✅ FIXED: Stats with delivered count
     const stats = {
       totalReminders: logs.length,
       sent24h: logs.filter(l => l.reminderType === '24h').length,
       sent2h: logs.filter(l => l.reminderType === '2h').length,
       sent30min: logs.filter(l => l.reminderType === '30min').length,
-      pending: logs.filter(l => l.status?.current === 'pending').length,
-      sent: logs.filter(l => l.status?.current === 'sent').length,
-      delivered: logs.filter(l => l.status?.current === 'delivered').length,
-      opened: logs.filter(l => l.opened === true || l.status?.current === 'opened').length,
-      clicked: logs.filter(l => l.clicked === true || l.status?.current === 'clicked').length,
+      pending: logs.filter(l => l.status?.current === 'pending' || l.status?.isPending === true).length,
+      sent: logs.filter(l => l.status?.current === 'sent' || l.status?.isSent === true).length,
+      delivered: logs.filter(l => l.status?.isDelivered === true).length,  // ✅ FIXED
+      opened: logs.filter(l => l.opened === true || l.status?.current === 'opened' || l.status?.isOpened === true).length,
+      clicked: logs.filter(l => l.clicked === true || l.status?.current === 'clicked' || l.status?.isClicked === true).length,
       clickedAction: logs.find(l => l.clicked === true)?.clickedAction || null,
-      failed: logs.filter(l => l.status?.current === 'failed').length,
-      noResponse: logs.filter(l => l.status?.current === 'no_response').length,
+      failed: logs.filter(l => l.status?.current === 'failed' || l.status?.isFailed === true).length,
+      noResponse: logs.filter(l => l.status?.current === 'no_response' || l.status?.isNoResponse === true).length,
     };
     
     res.json({
@@ -266,7 +263,6 @@ router.get('/reminder-logs/:id', protect, async (req, res) => {
     const appointment = await Appointment.findById(log.appointmentId).lean();
     const doctor = await Doctor.findById(log.doctorId).lean();
     
-    // ✅ FIXED: Include ALL status fields including booleans
     res.json({
       success: true,
       log: {
@@ -342,7 +338,6 @@ router.post('/reminder-logs/:id/opened', protect, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Log not found' });
     }
     
-    // ✅ Update ALL fields
     log.opened = true;
     log.openedAt = new Date();
     log.openedCount = (log.openedCount || 0) + 1;
@@ -385,7 +380,6 @@ router.post('/reminder-logs/:id/clicked', protect, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Log not found' });
     }
     
-    // ✅ Update ALL fields
     log.clicked = true;
     log.clickedAt = new Date();
     log.clickedCount = (log.clickedCount || 0) + 1;
@@ -441,7 +435,7 @@ router.get('/reminder-logs/export', protect, async (req, res) => {
       'Status': log.status?.current || 'pending',
       'Pending': log.status?.isPending ? 'Yes' : 'No',
       'Sent': log.status?.isSent ? 'Yes' : 'No',
-      'Delivered': log.status?.isDelivered ? 'Yes' : 'No',
+      'Delivered': log.status?.isDelivered ? 'Yes' : 'No',  // ✅ FIXED
       'Failed': log.status?.isFailed ? 'Yes' : 'No',
       'Opened': log.opened ? 'Yes' : 'No',
       'Opened At': log.openedAt ? new Date(log.openedAt).toLocaleString() : '-',
