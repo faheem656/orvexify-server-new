@@ -27,35 +27,39 @@ router.get('/reminder-logs', protect, async (req, res) => {
       query.reminderType = type;
     }
     
-     // ✅ COMPLETE FIXED: ALL Boolean filters
+    // ✅ COMPLETE FIXED: ALL Boolean filters
     if (status && status !== 'all') {
       switch (status) {
         case 'pending':
-          query['status.isPending'] = true;  // ✅ Boolean
+          query['status.isPending'] = true;
           break;
         case 'sent':
-          query['status.isSent'] = true;     // ✅ Boolean
+          query['status.isSent'] = true;
           break;
         case 'delivered':
-          query['status.isDelivered'] = true; // ✅ Boolean
+          query['status.isDelivered'] = true;
           break;
         case 'failed':
-          query['status.isFailed'] = true;    // ✅ Boolean
+          query['status.isFailed'] = true;
           break;
         case 'opened':
-          query['status.isOpened'] = true;    // ✅ Boolean
+          // ✅ FIXED: Check BOTH opened field AND status.isOpened
+          query.$or = [
+            { 'status.isOpened': true },
+            { opened: true }
+          ];
           break;
         case 'clicked':
-          query['status.isClicked'] = true;   // ✅ Boolean
+          query['status.isClicked'] = true;
           break;
         case 'confirmed':
-          query.clickedAction = 'confirm';    // ✅ Action filter
+          query.clickedAction = 'confirm';
           break;
         case 'cancelled':
-          query.clickedAction = 'cancel';     // ✅ Action filter
+          query.clickedAction = 'cancel';
           break;
         case 'no_response':
-          query['status.isNoResponse'] = true; // ✅ Boolean
+          query['status.isNoResponse'] = true;
           break;
         default:
           break;
@@ -88,7 +92,7 @@ router.get('/reminder-logs', protect, async (req, res) => {
     const appointmentMap = {};
     appointments.forEach(a => appointmentMap[a._id] = a);
     
-    // ✅ FIXED: Include ALL status fields including booleans
+    // ✅ Ensure ALL status fields exist
     const enrichedLogs = logs.map(log => ({
       ...log,
       status: {
@@ -114,21 +118,20 @@ router.get('/reminder-logs', protect, async (req, res) => {
       );
     }
     
-    // ✅ FIXED: Statistics with correct counts
+    // ✅ Stats with Boolean fields
     const allLogs = await ReminderLog.find({ userId: req.user._id }).lean();
     
-    // ✅ Calculate stats properly
     const stats = {
       totalSent: allLogs.length,
-      pending: allLogs.filter(l => l.status?.current === 'pending' || l.status?.isPending === true).length,
-      sent: allLogs.filter(l => l.status?.current === 'sent' || l.status?.isSent === true).length,
-      delivered: allLogs.filter(l => l.status?.isDelivered === true).length,  // ✅ FIXED
-      failed: allLogs.filter(l => l.status?.current === 'failed' || l.status?.isFailed === true).length,
-      opened: allLogs.filter(l => l.opened === true || l.status?.current === 'opened' || l.status?.isOpened === true).length,
-      clicked: allLogs.filter(l => l.clicked === true || l.status?.current === 'clicked' || l.status?.isClicked === true).length,
+      pending: allLogs.filter(l => l.status?.isPending === true).length,
+      sent: allLogs.filter(l => l.status?.isSent === true).length,
+      delivered: allLogs.filter(l => l.status?.isDelivered === true).length,
+      failed: allLogs.filter(l => l.status?.isFailed === true).length,
+      opened: allLogs.filter(l => l.status?.isOpened === true || l.opened === true).length,  // ✅ FIXED
+      clicked: allLogs.filter(l => l.status?.isClicked === true || l.clicked === true).length,
       confirmed: allLogs.filter(l => l.clickedAction === 'confirm').length,
       cancelled: allLogs.filter(l => l.clickedAction === 'cancel').length,
-      noResponse: allLogs.filter(l => l.status?.current === 'no_response' || l.status?.isNoResponse === true).length,
+      noResponse: allLogs.filter(l => l.status?.isNoResponse === true).length,
     };
 
     res.json({
@@ -147,6 +150,7 @@ router.get('/reminder-logs', protect, async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
+
 
 // ============ GET REMINDER LOGS BY APPOINTMENT ID ============
 router.get('/reminder-logs/appointment/:appointmentId', protect, async (req, res) => {

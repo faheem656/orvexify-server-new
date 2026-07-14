@@ -197,7 +197,9 @@ router.post('/appointments/:id/resend', protect, async (req, res) => {
 
 
 
+// ============================================
 // ============ CONFIRM APPOINTMENT ============
+// ============================================
 router.post('/confirm/:token', async (req, res) => {
   try {
     const { token } = req.params;
@@ -216,7 +218,7 @@ router.post('/confirm/:token', async (req, res) => {
       });
     }
 
-    // ✅ Check if already confirmed
+    // ✅ CHECK: If already confirmed
     if (appointment.confirmationStatus === 'confirmed') {
       return res.status(400).json({
         success: false,
@@ -231,7 +233,7 @@ router.post('/confirm/:token', async (req, res) => {
       });
     }
 
-    // ✅ Check if already cancelled
+    // ✅ CHECK: If already cancelled
     if (appointment.confirmationStatus === 'cancelled') {
       return res.status(400).json({
         success: false,
@@ -246,24 +248,63 @@ router.post('/confirm/:token', async (req, res) => {
       });
     }
 
-    // ✅ Check if appointment is in the past
+    // ✅ CHECK: If appointment is in the past
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const appointmentDate = new Date(appointment.appointmentDate + 'T00:00:00');
+    appointmentDate.setHours(0, 0, 0, 0);
+    
     if (appointmentDate < today) {
       return res.status(400).json({
         success: false,
-        message: '❌ This appointment is in the past and cannot be confirmed.'
+        message: '❌ This appointment is in the past and cannot be confirmed.',
+        isPast: true
       });
     }
 
-    // ✅ Update appointment
+    // ✅ UPDATE: Confirm appointment
     appointment.confirmationStatus = 'confirmed';
     appointment.status = 'confirmed';
     await appointment.save();
 
     console.log(`✅ Appointment confirmed: ${appointment._id}`);
 
-    // ✅ Send confirmation email
+    // ✅ UPDATE: Cancel any pending reminders
+    try {
+      await cancelAllReminders(appointment._id);
+      console.log(`✅ Pending reminders cancelled for confirmed appointment`);
+    } catch (err) {
+      console.error('❌ Failed to cancel reminders:', err);
+    }
+
+    // ✅ UPDATE: Reminder logs
+    try {
+      await ReminderLog.updateMany(
+        { 
+          appointmentId: appointment._id,
+          'status.current': { $in: ['pending', 'sent'] }
+        },
+        { 
+          $set: { 
+            'status.current': 'confirmed',
+            'status.isPending': false,
+            'status.isSent': true,
+            'status.isDelivered': true,
+            'status.isOpened': true,
+            'status.isClicked': true,
+            'status.isNoResponse': false,
+            clickedAction: 'confirm',
+            clicked: true,
+            clickedAt: new Date()
+          }
+        }
+      );
+      console.log(`✅ Reminder logs updated for confirmed appointment`);
+    } catch (err) {
+      console.error('❌ Failed to update logs:', err);
+    }
+
+    // ✅ SEND: Confirmation email
     try {
       const [patient, doctor, clinic] = await Promise.all([
         Patient.findById(appointment.patientId),
@@ -271,17 +312,19 @@ router.post('/confirm/:token', async (req, res) => {
         User.findById(appointment.userId)
       ]);
 
-      await sendConfirmedEmail(
-        appointment.userId,
-        patient?.email,
-        patient?.name || 'Patient',
-        clinic?.clinicName || 'Clinic',
-        appointment.appointmentDate,
-        appointment.appointmentTime,
-        doctor?.name || 'Doctor',
-        clinic?.timezone || 'Asia/Karachi'
-      );
-      console.log(`✅ Confirmation email sent to ${patient?.email}`);
+      if (patient?.email) {
+        await sendConfirmedEmail(
+          appointment.userId,
+          patient.email,
+          patient.name || 'Patient',
+          clinic?.clinicName || 'Clinic',
+          appointment.appointmentDate,
+          appointment.appointmentTime,
+          doctor?.name || 'Doctor',
+          clinic?.timezone || 'Asia/Karachi'
+        );
+        console.log(`✅ Confirmation email sent to ${patient.email}`);
+      }
     } catch (emailError) {
       console.error('❌ Failed to send confirmation email:', emailError);
       // Don't fail the request if email fails
@@ -306,7 +349,9 @@ router.post('/confirm/:token', async (req, res) => {
   }
 });
 
+// ============================================
 // ============ CANCEL APPOINTMENT ============
+// ============================================
 router.post('/cancel/:token', async (req, res) => {
   try {
     const { token } = req.params;
@@ -325,7 +370,7 @@ router.post('/cancel/:token', async (req, res) => {
       });
     }
 
-    // ✅ Check if already cancelled
+    // ✅ CHECK: If already cancelled
     if (appointment.confirmationStatus === 'cancelled') {
       return res.status(400).json({
         success: false,
@@ -340,7 +385,7 @@ router.post('/cancel/:token', async (req, res) => {
       });
     }
 
-    // ✅ Check if already confirmed
+    // ✅ CHECK: If already confirmed
     if (appointment.confirmationStatus === 'confirmed') {
       return res.status(400).json({
         success: false,
@@ -355,17 +400,21 @@ router.post('/cancel/:token', async (req, res) => {
       });
     }
 
-    // ✅ Check if appointment is in the past
+    // ✅ CHECK: If appointment is in the past
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const appointmentDate = new Date(appointment.appointmentDate + 'T00:00:00');
+    appointmentDate.setHours(0, 0, 0, 0);
+    
     if (appointmentDate < today) {
       return res.status(400).json({
         success: false,
-        message: '❌ This appointment is in the past and cannot be cancelled.'
+        message: '❌ This appointment is in the past and cannot be cancelled.',
+        isPast: true
       });
     }
 
-    // ✅ Check if appointment is within 2 hours
+    // ✅ CHECK: If appointment is within 2 hours
     const now = new Date();
     const appointmentDateTime = new Date(appointment.appointmentDate + 'T' + appointment.appointmentTime);
     const twoHoursBefore = new Date(appointmentDateTime.getTime() - 2 * 60 * 60 * 1000);
@@ -373,34 +422,72 @@ router.post('/cancel/:token', async (req, res) => {
     if (now > twoHoursBefore) {
       return res.status(400).json({
         success: false,
-        message: '❌ Cannot cancel appointment within 2 hours of the scheduled time. Please contact the clinic directly.'
+        message: '❌ Cannot cancel appointment within 2 hours of the scheduled time. Please contact the clinic directly.',
+        withinTwoHours: true
       });
     }
 
-    // ✅ Update appointment
+    // ✅ UPDATE: Cancel appointment
     appointment.confirmationStatus = 'cancelled';
     appointment.status = 'cancelled';
     await appointment.save();
 
     console.log(`✅ Appointment cancelled: ${appointment._id}`);
 
-    // ✅ Send cancellation email
+    // ✅ UPDATE: Cancel any pending reminders
+    try {
+      await cancelAllReminders(appointment._id);
+      console.log(`✅ Pending reminders cancelled for cancelled appointment`);
+    } catch (err) {
+      console.error('❌ Failed to cancel reminders:', err);
+    }
+
+    // ✅ UPDATE: Reminder logs
+    try {
+      await ReminderLog.updateMany(
+        { 
+          appointmentId: appointment._id,
+          'status.current': { $in: ['pending', 'sent'] }
+        },
+        { 
+          $set: { 
+            'status.current': 'cancelled',
+            'status.isPending': false,
+            'status.isSent': true,
+            'status.isDelivered': true,
+            'status.isOpened': true,
+            'status.isClicked': true,
+            'status.isNoResponse': false,
+            clickedAction: 'cancel',
+            clicked: true,
+            clickedAt: new Date()
+          }
+        }
+      );
+      console.log(`✅ Reminder logs updated for cancelled appointment`);
+    } catch (err) {
+      console.error('❌ Failed to update logs:', err);
+    }
+
+    // ✅ SEND: Cancellation email
     try {
       const [patient, clinic] = await Promise.all([
         Patient.findById(appointment.patientId),
         User.findById(appointment.userId)
       ]);
 
-      await sendCancellationEmail(
-        appointment.userId,
-        patient?.email,
-        patient?.name || 'Patient',
-        clinic?.clinicName || 'Clinic',
-        appointment.appointmentDate,
-        appointment.appointmentTime,
-        clinic?.timezone || 'Asia/Karachi'
-      );
-      console.log(`✅ Cancellation email sent to ${patient?.email}`);
+      if (patient?.email) {
+        await sendCancellationEmail(
+          appointment.userId,
+          patient.email,
+          patient.name || 'Patient',
+          clinic?.clinicName || 'Clinic',
+          appointment.appointmentDate,
+          appointment.appointmentTime,
+          clinic?.timezone || 'Asia/Karachi'
+        );
+        console.log(`✅ Cancellation email sent to ${patient.email}`);
+      }
     } catch (emailError) {
       console.error('❌ Failed to send cancellation email:', emailError);
       // Don't fail the request if email fails
