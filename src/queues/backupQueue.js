@@ -1,118 +1,45 @@
-// src/queues/backupQueue.js — Complete Fixed Version
+// src/queues/backupQueue.js — Complete with duplicate prevention
 
-const Queue = require('bull');
 const crypto = require('crypto');
 const moment = require('moment-timezone');
 const Appointment = require('../models/Appointment');
-const Patient = require('../models/Patient');
-const Doctor = require('../models/Doctor');
 const User = require('../models/User');
 const ReminderLog = require('../models/ReminderLog');
 const { sendReminderEmail } = require('../services/emailService');
 
-// ============ CREATE QUEUE ============
-const reminderQueue = new Queue('reminder-queue');
-
-// ============ IGNORE REDIS ERRORS ============
-reminderQueue.on('error', (err) => {
-  if (err.code === 'ECONNREFUSED' || err.message?.includes('Redis')) {
-    console.log('⚠️ Redis not available, using in-memory queue');
-    return;
-  }
-  console.error('❌ Queue error:', err.message);
-});
-
-// ============ QUEUE EVENTS ============
-reminderQueue.on('completed', (job) => {
-  console.log(`✅ Job ${job.id} completed`);
-});
-
-reminderQueue.on('failed', (job, err) => {
-  console.error(`❌ Job ${job.id} failed:`, err.message);
-});
-
-// ============ ADD JOB WITH BACKUP ============
-const addJobWithBackup = async (appointmentId, reminderType, delay = 0) => {
-  try {
-    const job = await reminderQueue.add(
-      'send-reminder',
-      { appointmentId, reminderType },
-      { delay }
-    );
-    
-    const updateField = {};
-    updateField[`reminder${reminderType}Queued`] = true;
-    updateField[`reminder${reminderType}QueuedAt`] = new Date();
-    updateField[`reminder${reminderType}JobId`] = job.id;
-    
-    await Appointment.findByIdAndUpdate(appointmentId, updateField);
-    
-    console.log(`✅ Job added: ${appointmentId} - ${reminderType} (delay: ${delay}ms)`);
-    return job;
-  } catch (error) {
-    console.error('❌ Queue add error:', error);
-    return null;
-  }
-};
-
-// ============ CANCEL JOB ============
-const cancelReminderJob = async (appointmentId, reminderType) => {
-  try {
-    const jobs = await reminderQueue.getJobs(['waiting', 'delayed']);
-    let cancelled = 0;
-    
-    for (const job of jobs) {
-      if (job.data.appointmentId === appointmentId && 
-          job.data.reminderType === reminderType) {
-        await job.remove();
-        cancelled++;
-      }
-    }
-    
-    if (cancelled > 0) {
-      console.log(`❌ Cancelled ${reminderType} for ${appointmentId}`);
-    }
-    
-    return cancelled > 0;
-  } catch (error) {
-    console.error('Cancel error:', error);
-    return false;
-  }
-};
-
-// ============ CANCEL ALL ============
-const cancelAllReminders = async (appointmentId) => {
-  try {
-    const jobs = await reminderQueue.getJobs(['waiting', 'delayed']);
-    let cancelled = 0;
-    
-    for (const job of jobs) {
-      if (job.data.appointmentId === appointmentId) {
-        await job.remove();
-        cancelled++;
-      }
-    }
-    
-    console.log(`❌ Cancelled ${cancelled} reminders for ${appointmentId}`);
-    return cancelled;
-  } catch (error) {
-    console.error('Cancel all error:', error);
-    return 0;
-  }
-};
-
 // ============ PROCESS REMINDER ============
 const processReminder = async (job) => {
   const { appointmentId, reminderType } = job.data;
-  console.log(`📧 Processing: ${appointmentId} - ${reminderType}`);
+  console.log(`📧 [WORKER] Processing: ${appointmentId} - ${reminderType}`);
   
   try {
-    // ✅ Update: Processing
-    const updateField = {};
-    updateField[`reminder${reminderType}Processing`] = true;
-    await Appointment.findByIdAndUpdate(appointmentId, updateField);
+    // ✅ CRITICAL: Check if already sent BEFORE processing
+    const existing = await Appointment.findById(appointmentId);
+    const sentField = `reminder${reminderType}Sent`;
     
-    // Get appointment
+    if (!existing) {
+      throw new Error('Appointment not found');
+    }
+    
+    // ✅ Skip if already sent
+    if (existing[sentField]) {
+      console.log(`⏭️ ${reminderType} already sent, skipping duplicate`);
+      return { success: true, skipped: true };
+    }
+    
+    // ✅ Check if currently processing (prevent concurrent)
+    const processingField = `reminder${reminderType}Processing`;
+    if (existing[processingField]) {
+      console.log(`⏭️ ${reminderType} already processing, skipping duplicate`);
+      return { success: true, skipped: true };
+    }
+    
+    // ✅ Update: Processing
+    await Appointment.findByIdAndUpdate(appointmentId, {
+      [processingField]: true,
+    });
+    
+    // Get appointment with populated fields
     const appointment = await Appointment.findById(appointmentId)
       .populate('patientId')
       .populate('doctorId')
@@ -122,30 +49,51 @@ const processReminder = async (job) => {
       throw new Error('Appointment not found');
     }
     
+    console.log(`📋 Appointment: ${appointment._id}`);
+    console.log(`  - Patient: ${appointment.patientId?.email}`);
+    console.log(`  - Doctor: ${appointment.doctorId?.name}`);
+    console.log(`  - Date: ${appointment.appointmentDate}`);
+    console.log(`  - Time: ${appointment.appointmentTime}`);
+    
     // Check if cancelled
     if (appointment.confirmationStatus === 'cancelled') {
-      console.log(`⏭️ Appointment cancelled`);
+      console.log(`⏭️ Appointment cancelled, skipping`);
+      await Appointment.findByIdAndUpdate(appointmentId, {
+        [processingField]: false,
+        [`reminder${reminderType}Cancelled`]: true,
+      });
       return { success: true, skipped: true };
     }
     
-    // Check if already sent
-    const sentField = `reminder${reminderType}Sent`;
+    // ✅ Double-check: Already sent (race condition)
     if (appointment[sentField]) {
-      console.log(`⏭️ Already sent`);
+      console.log(`⏭️ Already sent (double-check), skipping`);
+      await Appointment.findByIdAndUpdate(appointmentId, {
+        [processingField]: false,
+      });
       return { success: true, skipped: true };
     }
     
-    // 2h & 30min logic
+    // 2h logic
     if (reminderType === '2h') {
       if (appointment.reminder24hCancelled || appointment.confirmationStatus === 'confirmed') {
-        console.log(`⏭️ Skipping 2h`);
+        console.log(`⏭️ Skipping 2h (cancelled or confirmed)`);
+        await Appointment.findByIdAndUpdate(appointmentId, {
+          [processingField]: false,
+          [`reminder${reminderType}Cancelled`]: true,
+        });
         return { success: true, skipped: true };
       }
     }
     
+    // 30min logic
     if (reminderType === '30min') {
       if (appointment.reminder24hCancelled || appointment.reminder2hCancelled) {
-        console.log(`⏭️ Skipping 30min`);
+        console.log(`⏭️ Skipping 30min (cancelled)`);
+        await Appointment.findByIdAndUpdate(appointmentId, {
+          [processingField]: false,
+          [`reminder${reminderType}Cancelled`]: true,
+        });
         return { success: true, skipped: true };
       }
     }
@@ -157,13 +105,13 @@ const processReminder = async (job) => {
     }
     
     if (!clinic.smtpHost || !clinic.fromEmail || !clinic.emailPassword) {
-      throw new Error('Email not configured');
+      throw new Error('Email not configured for this clinic');
     }
     
     // Generate tracking token
     const trackingToken = crypto.randomBytes(32).toString('hex');
     
-    // ✅ Create log with proper status object
+    // Create log
     const log = await ReminderLog.create({
       userId: appointment.userId,
       appointmentId: appointment._id,
@@ -203,6 +151,8 @@ const processReminder = async (job) => {
       urgency = 'high';
     }
     
+    console.log(`📧 Sending ${reminderLabel} to ${appointment.patientId.email}`);
+    
     const result = await sendReminderEmail(
       appointment.userId,
       appointment.patientId.email,
@@ -220,17 +170,17 @@ const processReminder = async (job) => {
     );
     
     if (result.success) {
-      // ✅ Update appointment
-      const updateSent = {};
-      updateSent[sentField] = true;
-      updateSent[`reminder${reminderType}SentAt`] = new Date();
-      updateSent[`reminder${reminderType}Processing`] = false;
-      updateSent[`reminder${reminderType}Queued`] = false;
-      updateSent.lastReminderAttempt = new Date();
+      // ✅ Update appointment: Sent
+      await Appointment.findByIdAndUpdate(appointmentId, {
+        [sentField]: true,
+        [`reminder${reminderType}SentAt`]: new Date(),
+        [processingField]: false,
+        [`reminder${reminderType}Queued`]: false,
+        [`reminder${reminderType}LogId`]: log._id,
+        lastReminderAttempt: new Date(),
+      });
       
-      await Appointment.findByIdAndUpdate(appointmentId, updateSent);
-      
-      // ✅ Update log with ALL status fields
+      // ✅ Update log
       log.status.current = 'sent';
       log.status.isPending = false;
       log.status.isSent = true;
@@ -240,7 +190,7 @@ const processReminder = async (job) => {
       log.errorMessage = null;
       await log.save();
       
-      console.log(`✅ ${reminderType} sent for ${appointmentId}`);
+      console.log(`✅ ${reminderType} sent successfully for ${appointmentId}`);
       return { success: true };
     } else {
       throw new Error(result.error || 'Email send failed');
@@ -249,35 +199,36 @@ const processReminder = async (job) => {
   } catch (error) {
     console.error(`❌ Job failed:`, error.message);
     
-    // ✅ Update log with failed status
-    const log = await ReminderLog.findOne({
-      appointmentId: appointmentId,
-      reminderType: reminderType,
+    // Update appointment: Failed
+    await Appointment.findByIdAndUpdate(appointmentId, {
+      [`reminder${reminderType}Processing`]: false,
+      [`reminder${reminderType}Failed`]: true,
+      [`reminder${reminderType}Error`]: error.message,
     });
     
-    if (log) {
-      log.status.current = 'failed';
-      log.status.isPending = false;
-      log.status.isSent = false;
-      log.status.isDelivered = false;
-      log.status.isFailed = true;
-      log.errorMessage = error.message;
-      await log.save();
+    // Update log: Failed
+    try {
+      const log = await ReminderLog.findOne({
+        appointmentId: appointmentId,
+        reminderType: reminderType,
+      });
+      
+      if (log) {
+        log.status.current = 'failed';
+        log.status.isPending = false;
+        log.status.isSent = false;
+        log.status.isDelivered = false;
+        log.status.isFailed = true;
+        log.errorMessage = error.message;
+        await log.save();
+      }
+    } catch (err) {
+      console.error('❌ Failed to update log:', err.message);
     }
-    
-    // ✅ Update appointment
-    const updateFailed = {};
-    updateFailed[`reminder${reminderType}Processing`] = false;
-    updateFailed[`reminder${reminderType}Failed`] = true;
-    updateFailed[`reminder${reminderType}Error`] = error.message;
-    await Appointment.findByIdAndUpdate(appointmentId, updateFailed);
     
     throw error;
   }
 };
-
-// ============ PROCESS JOBS ============
-reminderQueue.process('send-reminder', processReminder);
 
 // ============ RECOVERY ============
 const recoverMissedJobs = async () => {
@@ -301,6 +252,7 @@ const recoverMissedJobs = async () => {
           $or: [
             { reminder24hQueued: { $ne: true } },
             { reminder24hProcessing: true, reminder24hQueuedAt: { $lt: new Date(Date.now() - 600000) } },
+            { reminder24hFailed: true },
           ]
         },
         {
@@ -308,6 +260,7 @@ const recoverMissedJobs = async () => {
           $or: [
             { reminder2hQueued: { $ne: true } },
             { reminder2hProcessing: true, reminder2hQueuedAt: { $lt: new Date(Date.now() - 600000) } },
+            { reminder2hFailed: true },
           ]
         },
         {
@@ -315,61 +268,73 @@ const recoverMissedJobs = async () => {
           $or: [
             { reminder30minQueued: { $ne: true } },
             { reminder30minProcessing: true, reminder30minQueuedAt: { $lt: new Date(Date.now() - 600000) } },
+            { reminder30minFailed: true },
           ]
         },
       ],
     });
     
-    console.log(`📋 Found ${appointments.length} appointments in recovery query`);
+    console.log(`📋 Found ${appointments.length} appointments needing recovery`);
     
-    if (appointments.length > 0) {
-      for (const apt of appointments) {
-        console.log(`\n🔍 Checking appointment ${apt._id}:`);
-        console.log(`  - Date: ${apt.appointmentDate}`);
-        console.log(`  - Time: ${apt.appointmentTime}`);
-        console.log(`  - Status: ${apt.status}`);
-        console.log(`  - Confirmation: ${apt.confirmationStatus}`);
-        console.log(`  - 24h Sent: ${apt.reminder24hSent}`);
-        console.log(`  - 2h Sent: ${apt.reminder2hSent}`);
-        console.log(`  - 30min Sent: ${apt.reminder30minSent}`);
-        console.log(`  - 24h Queued: ${apt.reminder24hQueued}`);
-        console.log(`  - 24h Processing: ${apt.reminder24hProcessing}`);
-        
-        const timezone = apt.timezone || 'Asia/Karachi';
-        const aptTime = moment.tz(
-          `${apt.appointmentDate} ${apt.appointmentTime}`,
-          'YYYY-MM-DD HH:mm',
-          timezone
-        );
-        
-        const diffHours = aptTime.diff(now, 'hours', true);
-        console.log(`  - Diff Hours: ${diffHours.toFixed(2)}`);
-        
-        const is24hEligible = diffHours <= 24.5 && diffHours > 0 && !apt.reminder24hSent;
-        const is2hEligible = diffHours <= 2.5 && diffHours > 0 && !apt.reminder2hSent;
-        const is30minEligible = diffHours <= 0.5 && diffHours > 0 && !apt.reminder30minSent;
-        
-        console.log(`  - 24h Eligible: ${is24hEligible}`);
-        console.log(`  - 2h Eligible: ${is2hEligible}`);
-        console.log(`  - 30min Eligible: ${is30minEligible}`);
-        
-        if (is24hEligible) {
-          await addJobWithBackup(apt._id, '24h', 0);
-          console.log(`🔁 Recovered 24h for ${apt._id}`);
-        }
-        
-        if (is2hEligible) {
-          await addJobWithBackup(apt._id, '2h', 0);
-          console.log(`🔁 Recovered 2h for ${apt._id}`);
-        }
-        
-        if (is30minEligible) {
-          await addJobWithBackup(apt._id, '30min', 0);
-          console.log(`🔁 Recovered 30min for ${apt._id}`);
+    for (const apt of appointments) {
+      console.log(`\n🔍 Checking appointment ${apt._id}:`);
+      console.log(`  - Date: ${apt.appointmentDate}`);
+      console.log(`  - Time: ${apt.appointmentTime}`);
+      
+      const timezone = apt.timezone || 'Asia/Karachi';
+      const aptTime = moment.tz(
+        `${apt.appointmentDate} ${apt.appointmentTime}`,
+        'YYYY-MM-DD HH:mm',
+        timezone
+      );
+      
+      const diffHours = aptTime.diff(now, 'hours', true);
+      console.log(`  - Diff Hours: ${diffHours.toFixed(2)}`);
+      console.log(`  - 24h Sent: ${apt.reminder24hSent}`);
+      console.log(`  - 2h Sent: ${apt.reminder2hSent}`);
+      console.log(`  - 30min Sent: ${apt.reminder30minSent}`);
+      
+      // ✅ Skip if all sent
+      if (apt.reminder24hSent && apt.reminder2hSent && apt.reminder30minSent) {
+        console.log(`⏭️ All reminders sent, skipping`);
+        continue;
+      }
+      
+      // ✅ Check if already sent before processing
+      const fakeJob = (type) => ({
+        id: `recovery-${Date.now()}-${Math.random()}`,
+        data: { appointmentId: apt._id, reminderType: type }
+      });
+      
+      if (diffHours <= 24.5 && diffHours > 0 && !apt.reminder24hSent) {
+        console.log(`🔁 Processing 24h for ${apt._id}`);
+        try {
+          await processReminder(fakeJob('24h'));
+          console.log(`✅ 24h processed`);
+        } catch (err) {
+          console.error(`❌ 24h failed:`, err.message);
         }
       }
-    } else {
-      console.log('✅ No appointments need recovery');
+      
+      if (diffHours <= 2.5 && diffHours > 0 && !apt.reminder2hSent) {
+        console.log(`🔁 Processing 2h for ${apt._id}`);
+        try {
+          await processReminder(fakeJob('2h'));
+          console.log(`✅ 2h processed`);
+        } catch (err) {
+          console.error(`❌ 2h failed:`, err.message);
+        }
+      }
+      
+      if (diffHours <= 0.5 && diffHours > 0 && !apt.reminder30minSent) {
+        console.log(`🔁 Processing 30min for ${apt._id}`);
+        try {
+          await processReminder(fakeJob('30min'));
+          console.log(`✅ 30min processed`);
+        } catch (err) {
+          console.error(`❌ 30min failed:`, err.message);
+        }
+      }
     }
     
     console.log('✅ Recovery check completed');
@@ -389,6 +354,13 @@ const scheduleNewAppointments = async () => {
       reminderScheduled: { $ne: true },
     }).limit(50);
     
+    if (appointments.length === 0) {
+      console.log('✅ No new appointments to schedule');
+      return;
+    }
+    
+    console.log(`📋 Found ${appointments.length} new appointments`);
+    
     for (const apt of appointments) {
       const timezone = apt.timezone || 'Asia/Karachi';
       const aptTime = moment.tz(
@@ -407,7 +379,30 @@ const scheduleNewAppointments = async () => {
       
       for (const [type, delay] of Object.entries(delays)) {
         if (delay > 0) {
-          await addJobWithBackup(apt._id, type, delay);
+          const minutes = Math.round(delay / 60000);
+          console.log(`⏰ Scheduling ${type} for ${apt._id} in ${minutes} minutes`);
+          
+          // ✅ Schedule with setTimeout
+          setTimeout(async () => {
+            // ✅ Check if already sent before sending
+            const checkApt = await Appointment.findById(apt._id);
+            if (checkApt && checkApt[`reminder${type}Sent`]) {
+              console.log(`⏭️ ${type} already sent, skipping scheduled job`);
+              return;
+            }
+            
+            console.log(`📧 Sending ${type} for ${apt._id}`);
+            const fakeJob = {
+              id: `scheduled-${Date.now()}-${Math.random()}`,
+              data: { appointmentId: apt._id, reminderType: type }
+            };
+            try {
+              await processReminder(fakeJob);
+              console.log(`✅ ${type} sent`);
+            } catch (err) {
+              console.error(`❌ ${type} failed:`, err.message);
+            }
+          }, delay);
         }
       }
       
@@ -420,12 +415,27 @@ const scheduleNewAppointments = async () => {
   }
 };
 
+// ============ STARTUP: Run Recovery Once ============
+// ✅ Only ONE startup recovery
+setTimeout(() => {
+  console.log('🚀 Running startup recovery...');
+  recoverMissedJobs();
+}, 3000);
+
+// ============ CRON JOBS ============
+const cron = require('node-cron');
+cron.schedule('*/2 * * * *', scheduleNewAppointments);
+cron.schedule('*/5 * * * *', recoverMissedJobs);
+
+console.log('✅ Cron jobs scheduled:');
+console.log('  - Schedule: Every 2 minutes');
+console.log('  - Recovery: Every 5 minutes');
+
 // ============ EXPORTS ============
 module.exports = {
-  reminderQueue,
-  addJobWithBackup,
-  cancelReminderJob,
-  cancelAllReminders,
   recoverMissedJobs,
   scheduleNewAppointments,
+  processReminder,
 };
+
+console.log('✅ backupQueue.js loaded (No duplicates)');

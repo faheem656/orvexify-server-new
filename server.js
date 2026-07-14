@@ -1,4 +1,5 @@
-// server.js
+// server.js — Complete Fixed Version
+
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
@@ -19,16 +20,22 @@ const integrationRoutes = require("./src/routes/integrationRoutes");
 const dns = require("dns");
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
-// ✅ 1. Load Queue System (No Redis)
-require('./src/queues/backupQueue');
-
-// ✅ 2. Load Cron Scheduler
-require('./src/scheduler/cronScheduler');
 dotenv.config();
 
-// Connect to MongoDB
+// ============ LOAD QUEUE SYSTEM ============
+// ✅ backupQueue handles: 
+//    - Recovery (every 5 minutes)
+//    - Scheduling (every 2 minutes)
+//    - Startup recovery
+require('./src/queues/backupQueue');
+
+// ❌ REMOVED: cronScheduler (duplicate)
+// require('./src/scheduler/cronScheduler');
+
+// ============ CONNECT DATABASE ============
 connectDB();
 
+// ============ EXPRESS APP ============
 const app = express();
 
 // Middleware
@@ -36,7 +43,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Routes
+// ============ ROUTES ============
 app.use("/api/auth", authRoutes);
 app.use("/api", templateRoutes);
 app.use("/api", reminderRoutes);
@@ -51,18 +58,18 @@ app.use("/api/tracking", trackingRoutes);
 app.use("/api", integrationRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/tracking", trackingRoutes);
-app.use("/api/dashboard", require("./src/routes/dashboardRoutes")); // ✅ ADD THIS
+app.use("/api/dashboard", require("./src/routes/dashboardRoutes"));
 
-// Health check
+// ============ HEALTH CHECK ============
 app.get("/api/health", (req, res) => {
   res.json({ status: "OK", message: "Server is running" });
 });
 
+// ============ REPORT SCHEDULER ============
 require("./src/scheduler/reportScheduler");
-
 console.log("✅ Report scheduler loaded");
 
-// Error handling middleware
+// ============ ERROR HANDLING ============
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({
@@ -71,7 +78,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
+// ============ START SERVER ============
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
