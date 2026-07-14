@@ -248,6 +248,17 @@ router.post('/confirm/:token', async (req, res) => {
       });
     }
 
+    // ✅ CHECK: Only pending or no_response can be confirmed
+    if (appointment.confirmationStatus !== 'pending' && 
+        appointment.confirmationStatus !== 'no_response') {
+      return res.status(400).json({
+        success: false,
+        message: `❌ Cannot confirm appointment with status: ${appointment.confirmationStatus}`,
+        invalidStatus: true,
+        currentStatus: appointment.confirmationStatus
+      });
+    }
+
     // ✅ CHECK: If appointment is in the past
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -400,6 +411,17 @@ router.post('/cancel/:token', async (req, res) => {
       });
     }
 
+    // ✅ CHECK: Only pending or no_response can be cancelled
+    if (appointment.confirmationStatus !== 'pending' && 
+        appointment.confirmationStatus !== 'no_response') {
+      return res.status(400).json({
+        success: false,
+        message: `❌ Cannot cancel appointment with status: ${appointment.confirmationStatus}`,
+        invalidStatus: true,
+        currentStatus: appointment.confirmationStatus
+      });
+    }
+
     // ✅ CHECK: If appointment is in the past
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -511,6 +533,31 @@ router.post('/cancel/:token', async (req, res) => {
     });
   }
 });
+
+// ============ CANCEL REMINDERS HELPER ============
+const cancelAllReminders = async (appointmentId) => {
+  try {
+    // Import queue functions
+    const { cancelAllReminders: cancelQueueReminders } = require('../queues/backupQueue');
+    
+    // Cancel from queue
+    await cancelQueueReminders(appointmentId);
+    
+    // Update appointment
+    await Appointment.findByIdAndUpdate(appointmentId, {
+      reminder24hQueued: false,
+      reminder24hProcessing: false,
+      reminder2hQueued: false,
+      reminder2hProcessing: false,
+      reminder30minQueued: false,
+      reminder30minProcessing: false,
+    });
+    
+    console.log(`✅ All reminders cancelled for appointment: ${appointmentId}`);
+  } catch (error) {
+    console.error('❌ Cancel reminders error:', error);
+  }
+};
 
 // ============ GET APPOINTMENT DETAILS BY TOKEN ============
 router.get('/details/:token', async (req, res) => {
