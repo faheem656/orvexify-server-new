@@ -24,21 +24,16 @@ dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 dotenv.config();
 
-// ============ LOAD AGENDA (NEW SYSTEM) ============
-// ✅ Yeh sab se pehle load hona chahiye
-const { agenda, scheduleAppointmentReminders, cancelReminders } = require('./src/services/agendaService');
-console.log('✅ Agenda service loaded');
+// ============ LOAD SERVICES ============
+// ✅ Agenda (Reminder System)
+require('./src/services/agendaService');
 
-// ============ LOAD QUEUE SYSTEM (DISABLED - OLD SYSTEM) ============
-// ⚠️ Comment out karo purane system ko
-// require('./src/queues/backupQueue');
-
-// ============ LOAD NO RESPONSE HANDLER ============
-// ✅ Yeh theek hai, isko rakho
+// ✅ No-Response Handler
 require('./src/scheduler/noResponseHandler');
 
-// ============ REPORT SCHEDULER ============
+// ✅ Report Scheduler
 require("./src/scheduler/reportScheduler");
+
 
 // ============ CONNECT DATABASE ============
 connectDB();
