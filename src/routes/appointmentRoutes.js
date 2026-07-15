@@ -5,6 +5,7 @@ const { protect } = require('../middleware/auth');
 const Appointment = require('../models/Appointment');
 const Patient = require('../models/Patient');
 const Doctor = require('../models/Doctor');
+const { scheduleAppointmentReminders } = require('../services/reminderScheduler');
 
 // ============ GET ALL APPOINTMENTS ============
 router.get('/appointments', protect, async (req, res) => {
@@ -57,6 +58,8 @@ router.get('/appointments', protect, async (req, res) => {
         apt.doctor?.name?.toLowerCase().includes(searchLower)
       );
     }
+
+        await scheduleAppointmentReminders(appointment);
     
     res.json({ success: true, appointments });
   } catch (error) {

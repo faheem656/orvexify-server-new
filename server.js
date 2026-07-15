@@ -1,4 +1,4 @@
-// server.js — Complete Fixed Version
+// server.js — Complete Fixed
 
 const express = require("express");
 const cors = require("cors");
@@ -17,24 +17,28 @@ const reminderLogRoutes = require("./src/routes/reminderLogRoutes");
 const trackingRoutes = require("./src/routes/trackingRoutes");
 const integrationRoutes = require("./src/routes/integrationRoutes");
 
-const dns = require("dns");
-dns.setServers(["8.8.8.8", "1.1.1.1"]);
+const dns = require('dns');
+
+// ✅ Use Google DNS
+dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 dotenv.config();
 
-// ============ LOAD QUEUE SYSTEM ============
-// ✅ backupQueue handles: 
-//    - Recovery (every 5 minutes)
-//    - Scheduling (every 2 minutes)
-//    - Startup recovery
-require('./src/queues/backupQueue');
+// ============ LOAD AGENDA (NEW SYSTEM) ============
+// ✅ Yeh sab se pehle load hona chahiye
+const { agenda, scheduleAppointmentReminders, cancelReminders } = require('./src/services/agendaService');
+console.log('✅ Agenda service loaded');
+
+// ============ LOAD QUEUE SYSTEM (DISABLED - OLD SYSTEM) ============
+// ⚠️ Comment out karo purane system ko
+// require('./src/queues/backupQueue');
 
 // ============ LOAD NO RESPONSE HANDLER ============
-require('./src/scheduler/noResponseHandler');  
+// ✅ Yeh theek hai, isko rakho
+require('./src/scheduler/noResponseHandler');
 
 // ============ REPORT SCHEDULER ============
 require("./src/scheduler/reportScheduler");
-
 
 // ============ CONNECT DATABASE ============
 connectDB();
@@ -68,7 +72,6 @@ app.use("/api/dashboard", require("./src/routes/dashboardRoutes"));
 app.get("/api/health", (req, res) => {
   res.json({ status: "OK", message: "Server is running" });
 });
-
 
 // ============ ERROR HANDLING ============
 app.use((err, req, res, next) => {
