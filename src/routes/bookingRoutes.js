@@ -1,14 +1,16 @@
-// src/routes/bookingRoutes.js — Complete Fixed Version
+// src/routes/bookingRoutes.js — COMPLETE FIXED
 
 const express = require("express");
 const router = express.Router();
 const crypto = require("crypto");
-const moment = require("moment-timezone");  // ✅ Add this
+const moment = require("moment-timezone");
 const User = require("../models/User");
 const Doctor = require("../models/Doctor");
 const Patient = require("../models/Patient");
 const Appointment = require("../models/Appointment");
 const { sendBookingConfirmation } = require("../services/emailService");
+// ✅ ADD THIS IMPORT
+const { scheduleAppointmentReminders } = require("../services/reminderScheduler");
 
 // ============ GET CLINIC BY SLUG (PUBLIC) ============
 router.get("/clinic/:slug", async (req, res) => {
@@ -137,14 +139,13 @@ router.get("/doctor/:doctorId", async (req, res) => {
   }
 });
 
-// ============ GET AVAILABLE SLOTS (PUBLIC) - FIXED ============
+// ============ GET AVAILABLE SLOTS (PUBLIC) ============
 router.post("/available-slots", async (req, res) => {
   const { clinicId, doctorId, date } = req.body;
 
   console.log(`📅 Public request: Available slots for doctor ${doctorId} on ${date}`);
 
   try {
-    // ✅ Get clinic with timezone
     const clinic = await User.findById(clinicId).select('timezone isActive').lean();
     
     if (!clinic) {
@@ -180,11 +181,7 @@ router.post("/available-slots", async (req, res) => {
     const clinicTimezone = clinic.timezone || 'Asia/Karachi';
     console.log(`🕐 Clinic Timezone: ${clinicTimezone}`);
 
-    // ✅ FIX: Parse date in clinic's timezone using moment
-    // This ensures "2026-06-30" stays "2026-06-30" in clinic's timezone
     const dateObj = moment.tz(date, 'YYYY-MM-DD', clinicTimezone);
-    
-    // ✅ Get day name in clinic's timezone
     const dayName = dateObj.format('dddd').toLowerCase();
     console.log(`📆 Day in clinic timezone: ${dayName}, Date: ${dateObj.format('YYYY-MM-DD')}`);
 
@@ -206,7 +203,6 @@ router.post("/available-slots", async (req, res) => {
     const slotDuration = doctor.slotDuration || 30;
     const buffer = doctor.bufferBetweenSlots || 5;
 
-    // ✅ FIX: Parse start and end times in clinic's timezone
     const startTime = moment.tz(
       `${dateObj.format('YYYY-MM-DD')} ${daySchedule.start}`,
       'YYYY-MM-DD HH:mm',
@@ -220,10 +216,9 @@ router.post("/available-slots", async (req, res) => {
 
     console.log(`⏰ Start: ${startTime.format('HH:mm')}, End: ${endTime.format('HH:mm')}`);
 
-    // ✅ Get booked appointments
     const bookedAppointments = await Appointment.find({
       doctorId: doctorId,
-      appointmentDate: date,  // ✅ Use the date string as-is
+      appointmentDate: date,
       status: { $in: ["scheduled", "confirmed", "pending"] },
     }).select("appointmentTime status patientName").lean();
 
@@ -234,7 +229,6 @@ router.post("/available-slots", async (req, res) => {
       patientName: apt.patientName
     }));
 
-    // ✅ Parse break time
     let breakStart = null;
     let breakEnd = null;
     if (doctor.breakTime && doctor.breakTime.enabled) {
@@ -255,7 +249,6 @@ router.post("/available-slots", async (req, res) => {
     let slotCount = 0;
     let availableCount = 0;
 
-    // ✅ Get current time in clinic's timezone
     const now = moment().tz(clinicTimezone);
     const todayStr = now.format('YYYY-MM-DD');
     const isToday = date === todayStr;
@@ -264,10 +257,8 @@ router.post("/available-slots", async (req, res) => {
     console.log(`📅 Is today: ${isToday}`);
 
     while (current.isBefore(endTime)) {
-      // ✅ Format time in 24-hour format (clinic's timezone)
       const timeString = current.format('HH:mm');
       
-      // ✅ Check if time is in break
       let isBreak = false;
       if (breakStart && breakEnd) {
         if (current.isBetween(breakStart, breakEnd, null, '[)')) {
@@ -276,8 +267,6 @@ router.post("/available-slots", async (req, res) => {
       }
 
       const isBooked = bookedTimes.includes(timeString);
-
-      // ✅ Check if time is in past (for today only)
       let isPast = false;
       if (isToday) {
         if (current.isBefore(now)) {
@@ -298,7 +287,6 @@ router.post("/available-slots", async (req, res) => {
       slotCount++;
       if (isAvailable) availableCount++;
 
-      // ✅ Move to next slot
       current.add(slotDuration + buffer, 'minutes');
     }
 
@@ -383,7 +371,6 @@ router.post("/book", async (req, res) => {
       });
     }
 
-    // ✅ Check if slot is already booked
     const existingAppointment = await Appointment.findOne({
       doctorId,
       appointmentDate,
@@ -398,7 +385,6 @@ router.post("/book", async (req, res) => {
       });
     }
 
-    // ✅ Find or create patient
     let patient = await Patient.findOne({
       email: patientEmail,
       userId: clinicId,
@@ -423,11 +409,9 @@ router.post("/book", async (req, res) => {
       await patient.save();
     }
 
-    // ✅ Generate tokens
     const confirmationToken = crypto.randomBytes(32).toString("hex");
     const cancellationToken = crypto.randomBytes(32).toString("hex");
 
-    // ✅ Create appointment
     const appointment = await Appointment.create({
       userId: clinicId,
       patientId: patient._id,
@@ -441,6 +425,26 @@ router.post("/book", async (req, res) => {
       notes: notes || "",
       timezone: clinicTimezone,
     });
+
+    console.log(`✅ Appointment created: ${appointment._id}`);
+
+    // ============================================================
+    // ✅ CRITICAL: Schedule Reminders
+    // ============================================================
+    console.log('📋 [SCHEDULE] Calling scheduleAppointmentReminders...');
+    try {
+      const scheduleResult = await scheduleAppointmentReminders(appointment);
+      console.log(`📋 [SCHEDULE] Result:`, scheduleResult);
+      
+      if (scheduleResult.success) {
+        console.log(`✅ [SCHEDULE] ${scheduleResult.scheduled || 0} reminders scheduled`);
+      } else {
+        console.error(`❌ [SCHEDULE] Failed:`, scheduleResult.error);
+      }
+    } catch (scheduleError) {
+      console.error('❌ [SCHEDULE] Error:', scheduleError);
+    }
+    // ============================================================
 
     // ✅ Send confirmation email
     try {
