@@ -1,17 +1,23 @@
-// ecosystem.config.js — Server root mein banayein
+// ecosystem.config.js — Uses .env file
 
 module.exports = {
   apps: [{
     name: 'orvexify',
     script: 'server.js',
-    instances: 1,              // 1 instance (single core)
-    exec_mode: 'fork',         // Fork mode
-    watch: false,             // Auto-restart on file change
-    max_memory_restart: '500M', // Restart if memory > 500MB
+    instances: 1,
+    exec_mode: 'fork',
+    watch: false,
+    max_memory_restart: '500M',
+    
+    // ✅ Auto-load .env file
+    env_file: '.env',
+    
+    // ✅ Override any specific env vars if needed
     env: {
       NODE_ENV: 'production',
-      PORT: 5000
+      PORT: 5000,
     },
+    
     error_file: 'logs/err.log',
     out_file: 'logs/out.log',
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
