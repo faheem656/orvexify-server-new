@@ -29,8 +29,12 @@ dotenv.config();
 //    - Startup recovery
 require('./src/queues/backupQueue');
 
-// ❌ REMOVED: cronScheduler (duplicate)
-// require('./src/scheduler/cronScheduler');
+// ============ LOAD NO RESPONSE HANDLER ============
+require('./src/scheduler/noResponseHandler');  
+
+// ============ REPORT SCHEDULER ============
+require("./src/scheduler/reportScheduler");
+
 
 // ============ CONNECT DATABASE ============
 connectDB();
@@ -65,9 +69,6 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "OK", message: "Server is running" });
 });
 
-// ============ REPORT SCHEDULER ============
-require("./src/scheduler/reportScheduler");
-console.log("✅ Report scheduler loaded");
 
 // ============ ERROR HANDLING ============
 app.use((err, req, res, next) => {
