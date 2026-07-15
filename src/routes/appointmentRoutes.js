@@ -29,7 +29,6 @@ router.get('/appointments', protect, async (req, res) => {
       .sort({ appointmentDate: 1, appointmentTime: 1 })
       .lean();
     
-    // Get patient and doctor details
     const patientIds = [...new Set(appointments.map(a => a.patientId))];
     const doctorIds = [...new Set(appointments.map(a => a.doctorId))];
     
@@ -42,14 +41,12 @@ router.get('/appointments', protect, async (req, res) => {
     const doctorMap = {};
     doctors.forEach(d => doctorMap[d._id] = d);
     
-    // Combine data
     appointments = appointments.map(apt => ({
       ...apt,
       patient: patientMap[apt.patientId] || null,
       doctor: doctorMap[apt.doctorId] || null
     }));
     
-    // Apply search filter
     if (search) {
       const searchLower = search.toLowerCase();
       appointments = appointments.filter(apt => 
@@ -58,8 +55,8 @@ router.get('/appointments', protect, async (req, res) => {
         apt.doctor?.name?.toLowerCase().includes(searchLower)
       );
     }
-
-        await scheduleAppointmentReminders(appointment);
+    
+    // ✅ REMOVED: scheduleAppointmentReminders(appointment) — Yeh yahan nahi hona chahiye!
     
     res.json({ success: true, appointments });
   } catch (error) {
