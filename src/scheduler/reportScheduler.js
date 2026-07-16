@@ -1,4 +1,4 @@
-// src/scheduler/reportScheduler.js — Complete Fixed Version
+// src/scheduler/reportScheduler.js — COMPLETE FIXED WITH TIMEZONE SUPPORT
 
 const cron = require('node-cron');
 const moment = require('moment-timezone');
@@ -16,7 +16,6 @@ const generateDailyReport = async (userId, timezone) => {
     const todayDate = now.format('YYYY-MM-DD');
     const tomorrowDate = now.clone().add(1, 'day').format('YYYY-MM-DD');
 
-    // ✅ Get today's appointments
     const todayAppointments = await Appointment.find({
       userId: userId,
       appointmentDate: todayDate
@@ -25,7 +24,6 @@ const generateDailyReport = async (userId, timezone) => {
     .populate('doctorId', 'name specialty')
     .lean();
 
-    // ✅ Get tomorrow's appointments (preview)
     const tomorrowAppointments = await Appointment.find({
       userId: userId,
       appointmentDate: tomorrowDate
@@ -34,14 +32,12 @@ const generateDailyReport = async (userId, timezone) => {
     .populate('doctorId', 'name specialty')
     .lean();
 
-    // ✅ Statistics for today
     const totalToday = todayAppointments.length;
     const confirmedToday = todayAppointments.filter(a => a.confirmationStatus === 'confirmed').length;
     const pendingToday = todayAppointments.filter(a => a.confirmationStatus === 'pending').length;
     const cancelledToday = todayAppointments.filter(a => a.confirmationStatus === 'cancelled').length;
     const noResponseToday = todayAppointments.filter(a => a.confirmationStatus === 'no_response').length;
 
-    // ✅ Group appointments by time slots
     const morningSlots = todayAppointments.filter(a => {
       const time = moment(a.appointmentTime, 'h:mm A');
       return time.hour() < 12;
@@ -55,7 +51,6 @@ const generateDailyReport = async (userId, timezone) => {
       return time.hour() >= 17;
     });
 
-    // ✅ Get clinic details
     const clinic = await User.findById(userId);
     const clinicName = clinic?.clinicName || 'Clinic';
 
@@ -95,7 +90,6 @@ const generateWeeklyReport = async (userId, timezone) => {
     const startDate = weekStart.format('YYYY-MM-DD');
     const endDate = weekEnd.format('YYYY-MM-DD');
 
-    // ✅ Get all appointments for the week
     const weekAppointments = await Appointment.find({
       userId: userId,
       appointmentDate: { $gte: startDate, $lte: endDate }
@@ -104,14 +98,12 @@ const generateWeeklyReport = async (userId, timezone) => {
     .populate('doctorId', 'name specialty')
     .lean();
 
-    // ✅ Weekly statistics
     const totalWeek = weekAppointments.length;
     const confirmedWeek = weekAppointments.filter(a => a.confirmationStatus === 'confirmed').length;
     const pendingWeek = weekAppointments.filter(a => a.confirmationStatus === 'pending').length;
     const cancelledWeek = weekAppointments.filter(a => a.confirmationStatus === 'cancelled').length;
     const noResponseWeek = weekAppointments.filter(a => a.confirmationStatus === 'no_response').length;
 
-    // ✅ Daily breakdown
     const dailyBreakdown = {};
     for (let i = 0; i < 7; i++) {
       const day = weekStart.clone().add(i, 'days');
@@ -128,7 +120,6 @@ const generateWeeklyReport = async (userId, timezone) => {
       };
     }
 
-    // ✅ Doctor performance
     const doctorIds = [...new Set(weekAppointments.map(a => a.doctorId))];
     const doctors = await Doctor.find({ _id: { $in: doctorIds } }).lean();
     const doctorPerformance = doctors.map(doc => {
@@ -143,7 +134,6 @@ const generateWeeklyReport = async (userId, timezone) => {
       };
     }).sort((a, b) => b.total - a.total);
 
-    // ✅ Get reminder logs with new status object
     const reminderLogs = await ReminderLog.find({
       userId: userId,
       sentAt: { $gte: weekStart.toDate(), $lte: weekEnd.toDate() }
@@ -155,7 +145,6 @@ const generateWeeklyReport = async (userId, timezone) => {
     const deliveredReminders = reminderLogs.filter(l => l.status?.current === 'delivered').length;
     const failedReminders = reminderLogs.filter(l => l.status?.current === 'failed').length;
 
-    // ✅ Get clinic details
     const clinic = await User.findById(userId);
     const clinicName = clinic?.clinicName || 'Clinic';
 
@@ -203,14 +192,12 @@ const sendDailyReport = async (clinic) => {
       return;
     }
 
-    // ✅ Get clinic email settings
     const settings = await getUserEmailSettings(userId);
     if (!settings) {
       console.log(`❌ No email configured for clinic: ${clinic.email}`);
       return;
     }
 
-    // ✅ Build email HTML
     const html = `
       <!DOCTYPE html>
       <html>
@@ -333,7 +320,7 @@ const sendDailyReport = async (clinic) => {
     const subject = `📋 Daily Appointment Report - ${report.date}`;
     await sendEmailFromClinic(userId, clinic.email, subject, html);
 
-    console.log(`✅ Daily report sent to ${clinic.email}`);
+    console.log(`✅ Daily report sent to ${clinic.email} (${timezone})`);
   } catch (error) {
     console.error(`❌ Error sending daily report to ${clinic.email}:`, error);
   }
@@ -475,15 +462,15 @@ const sendWeeklyReport = async (clinic) => {
     const subject = `📊 Weekly Appointment Report - ${report.weekRange}`;
     await sendEmailFromClinic(userId, clinic.email, subject, html);
 
-    console.log(`✅ Weekly report sent to ${clinic.email}`);
+    console.log(`✅ Weekly report sent to ${clinic.email} (${timezone})`);
   } catch (error) {
     console.error(`❌ Error sending weekly report to ${clinic.email}:`, error);
   }
 };
 
-// ============ RUN DAILY REPORTS ============
+// ============ RUN DAILY REPORTS (ALL CLINICS) ============
 const runDailyReports = async () => {
-  console.log('📋 Running daily reports...');
+  console.log('📋 Running daily reports for all clinics...');
   
   try {
     const clinics = await User.find({
@@ -491,19 +478,30 @@ const runDailyReports = async () => {
       email: { $exists: true, $ne: null }
     });
 
+    console.log(`📋 Found ${clinics.length} active clinics`);
+
     for (const clinic of clinics) {
-      await sendDailyReport(clinic);
+      const timezone = clinic.timezone || 'Asia/Karachi';
+      const now = moment().tz(timezone);
+      const currentHour = now.hour();
+      
+      // ✅ Only send if it's 10:00 PM in clinic's timezone
+      if (currentHour === 22) {
+        await sendDailyReport(clinic);
+      } else {
+        console.log(`⏭️ Skipping ${clinic.clinicName} - Current: ${now.format('HH:mm')} (not 22:00)`);
+      }
     }
 
-    console.log(`✅ Daily reports completed for ${clinics.length} clinics`);
+    console.log(`✅ Daily reports check completed`);
   } catch (error) {
     console.error('❌ Daily reports error:', error);
   }
 };
 
-// ============ RUN WEEKLY REPORTS ============
+// ============ RUN WEEKLY REPORTS (ALL CLINICS) ============
 const runWeeklyReports = async () => {
-  console.log('📊 Running weekly reports...');
+  console.log('📊 Running weekly reports for all clinics...');
   
   try {
     const clinics = await User.find({
@@ -511,11 +509,23 @@ const runWeeklyReports = async () => {
       email: { $exists: true, $ne: null }
     });
 
+    console.log(`📋 Found ${clinics.length} active clinics`);
+
     for (const clinic of clinics) {
-      await sendWeeklyReport(clinic);
+      const timezone = clinic.timezone || 'Asia/Karachi';
+      const now = moment().tz(timezone);
+      const currentHour = now.hour();
+      const currentDay = now.day(); // 0 = Sunday
+      
+      // ✅ Only send if it's Sunday 11:00 PM in clinic's timezone
+      if (currentDay === 0 && currentHour === 23) {
+        await sendWeeklyReport(clinic);
+      } else {
+        console.log(`⏭️ Skipping ${clinic.clinicName} - Current: ${now.format('dddd HH:mm')} (not Sunday 23:00)`);
+      }
     }
 
-    console.log(`✅ Weekly reports completed for ${clinics.length} clinics`);
+    console.log(`✅ Weekly reports check completed`);
   } catch (error) {
     console.error('❌ Weekly reports error:', error);
   }
@@ -523,21 +533,21 @@ const runWeeklyReports = async () => {
 
 // ============ SCHEDULE CRON JOBS ============
 
-// ✅ Daily Report: Every day at 10:00 PM (22:00)
-cron.schedule('0 22 * * *', async () => {
-  console.log('🕐 Running scheduled daily reports...');
+// ✅ Run every hour to check all clinics
+cron.schedule('0 * * * *', async () => {
+  console.log(`🕐 Running report check at ${new Date().toISOString()}`);
+  
+  // Check daily reports (10:00 PM)
   await runDailyReports();
-});
-
-// ✅ Weekly Report: Every Sunday at 11:00 PM (23:00)
-cron.schedule('0 23 * * 0', async () => {
-  console.log('🕐 Running scheduled weekly reports...');
+  
+  // Check weekly reports (Sunday 11:00 PM)
   await runWeeklyReports();
 });
 
 console.log('📋 Report scheduler started:');
-console.log('  - Daily reports: Every day at 10:00 PM');
-console.log('  - Weekly reports: Every Sunday at 11:00 PM');
+console.log('  - Checks every hour');
+console.log('  - Sends daily report at 10:00 PM (clinic timezone)');
+console.log('  - Sends weekly report at Sunday 11:00 PM (clinic timezone)');
 
 // ============ EXPORTS ============
 module.exports = {
