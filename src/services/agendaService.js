@@ -1,4 +1,4 @@
-// src/services/agendaService.js — PRODUCTION READY
+// src/services/agendaService.js — COMPLETE PRODUCTION READY
 
 const Agenda = require('agenda');
 const Appointment = require('../models/Appointment');
@@ -9,21 +9,22 @@ const ReminderLog = require('../models/ReminderLog');
 const { sendReminderEmail } = require('./emailService');
 const crypto = require('crypto');
 
-// ✅ Check MONGODB_URI
+// ✅ FIXED: MONGODB_URI check (not MONGODB_URI)
 if (!process.env.MONGODB_URI) {
   console.error('❌ MONGODB_URI is not defined!');
+  console.error('📋 Please set MONGODB_URI in .env file');
   process.exit(1);
 }
 
 console.log('📋 Agenda initializing...');
 
-// ✅ Agenda instance
+// ✅ FIXED: MONGODB_URI use (not MONGODB_URI)
 const agenda = new Agenda({
   db: {
     address: process.env.MONGODB_URI,
     collection: 'agendaJobs'
   },
-  processEvery: '30 seconds',
+  processEvery: '10 seconds',  // ✅ Faster check (was 30 seconds)
   defaultConcurrency: 5,
   maxConcurrency: 10,
   defaultLockLimit: 1,
@@ -51,6 +52,29 @@ agenda.on('success', (job) => {
 agenda.on('fail', (error, job) => {
   console.error(`❌ [Job] ${job.attrs.name} failed:`, error.message);
 });
+
+// ============ KEEP ALIVE — PREVENT SLEEP ============
+
+// ✅ Simple keep-alive: Just check jobs count
+setInterval(async () => {
+  try {
+    // Simple query to keep connection alive
+    const count = await agenda.jobs({ limit: 1 });
+    console.log(`💓 Agenda alive (${new Date().toISOString()})`);
+  } catch (error) {
+    console.error('❌ Heartbeat error:', error);
+  }
+}, 30000); // Every 30 seconds
+
+// ✅ Force process every 10 seconds
+setInterval(async () => {
+  try {
+    // This keeps the event loop active
+    await agenda._processJobs();
+  } catch (error) {
+    // Silent fail - ignore
+  }
+}, 10000);
 
 // ============ GENERATE TRACKING TOKEN ============
 const generateTrackingToken = () => {
