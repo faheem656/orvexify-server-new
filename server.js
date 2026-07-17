@@ -73,6 +73,19 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "OK", message: "Server is running" });
 });
 
+
+// ============ wake-up ============
+
+app.get('/api/wake-up', async (req, res) => {
+  try {
+    const { agenda } = require('./src/services/agendaService');
+    await agenda._processJobs();
+    res.json({ success: true, message: 'Wake-up called' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ============ ERROR HANDLING ============
 app.use((err, req, res, next) => {
   console.error(err.stack);

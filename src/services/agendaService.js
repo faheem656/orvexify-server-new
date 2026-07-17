@@ -63,6 +63,29 @@ setInterval(async () => {
   }
 }, 5000);
 
+
+// ✅ Startup Recovery — Force process pending jobs on startup
+setTimeout(async () => {
+  console.log('🔄 [STARTUP] Running startup recovery...');
+  try {
+    // ✅ Find all pending jobs
+    const jobs = await agenda.jobs({
+      nextRunAt: { $lte: new Date() }
+    });
+    
+    if (jobs.length > 0) {
+      console.log(`📋 [STARTUP] Found ${jobs.length} missed jobs, processing...`);
+      await agenda._processJobs();
+      console.log('✅ [STARTUP] Startup recovery completed');
+    } else {
+      console.log('✅ [STARTUP] No missed jobs found');
+    }
+  } catch (error) {
+    console.error('❌ [STARTUP] Startup recovery failed:', error.message);
+  }
+}, 5000); // 5 seconds after server starts
+
+
 // ============ GENERATE TRACKING TOKEN ============
 const generateTrackingToken = () => {
   return crypto.randomBytes(32).toString('hex');
