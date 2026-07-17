@@ -76,15 +76,26 @@ app.get("/api/health", (req, res) => {
 
 // ============ wake-up ============
 
+
 app.get('/api/wake-up', async (req, res) => {
   try {
     const { agenda } = require('./src/services/agendaService');
-    await agenda._processJobs();
-    res.json({ success: true, message: 'Wake-up called' });
+    
+    // ✅ Agenda automatically process kar raha hai (processEvery: '5 seconds')
+    // ✅ Sirf status check karo
+    const stats = await agenda.jobs({ limit: 1 });
+    
+    res.json({ 
+      success: true, 
+      message: 'Agenda is active',
+      jobs: stats.length 
+    });
   } catch (error) {
+    console.error('❌ Wake-up error:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
+
 
 // ============ ERROR HANDLING ============
 app.use((err, req, res, next) => {

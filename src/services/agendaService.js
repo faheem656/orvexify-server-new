@@ -1,4 +1,4 @@
-// src/services/agendaService.js — Complete Production Ready
+// src/services/agendaService.js — FINAL FIXED (Agenda 5.x Compatible)
 
 const Agenda = require('agenda');
 const Appointment = require('../models/Appointment');
@@ -52,19 +52,8 @@ agenda.on('fail', (error, job) => {
   console.error(`❌ [Job] ${job.attrs.name} failed:`, error.message);
 });
 
-// ============ FORCE WORKER TO STAY ACTIVE ============
+// ============ STARTUP RECOVERY ============
 
-// ✅ Force process jobs every 5 seconds
-setInterval(async () => {
-  try {
-    await agenda._processJobs();
-  } catch (error) {
-    // Silent fail
-  }
-}, 5000);
-
-
-// ✅ Startup Recovery — Force process pending jobs on startup
 setTimeout(async () => {
   console.log('🔄 [STARTUP] Running startup recovery...');
   try {
@@ -74,8 +63,17 @@ setTimeout(async () => {
     });
     
     if (jobs.length > 0) {
-      console.log(`📋 [STARTUP] Found ${jobs.length} missed jobs, processing...`);
-      await agenda._processJobs();
+      console.log(`📋 [STARTUP] Found ${jobs.length} missed jobs`);
+      
+      for (const job of jobs) {
+        try {
+          console.log(`🔄 [STARTUP] Processing ${job.attrs.name}...`);
+          await job.run();  // ✅ This works in Agenda 5.x!
+          console.log(`✅ [STARTUP] ${job.attrs.name} completed`);
+        } catch (err) {
+          console.error(`❌ [STARTUP] ${job.attrs.name} failed:`, err.message);
+        }
+      }
       console.log('✅ [STARTUP] Startup recovery completed');
     } else {
       console.log('✅ [STARTUP] No missed jobs found');
@@ -83,8 +81,7 @@ setTimeout(async () => {
   } catch (error) {
     console.error('❌ [STARTUP] Startup recovery failed:', error.message);
   }
-}, 5000); // 5 seconds after server starts
-
+}, 5000);
 
 // ============ GENERATE TRACKING TOKEN ============
 const generateTrackingToken = () => {
