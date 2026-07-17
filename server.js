@@ -90,6 +90,7 @@ app.get('/api/wake-up', async (req, res) => {
       message: 'Agenda is active',
       jobs: stats.length 
     });
+    console.log(`Agenda is active`)
   } catch (error) {
     console.error('❌ Wake-up error:', error.message);
     res.status(500).json({ success: false, message: error.message });
