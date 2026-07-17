@@ -9,9 +9,9 @@ const ReminderLog = require('../models/ReminderLog');
 const { sendReminderEmail } = require('./emailService');
 const crypto = require('crypto');
 
-// ✅ Check MONGO_URI
-if (!process.env.MONGO_URI) {
-  console.error('❌ MONGO_URI is not defined!');
+// ✅ Check MONGODB_URI
+if (!process.env.MONGODB_URI) {
+  console.error('❌ MONGODB_URI is not defined!');
   process.exit(1);
 }
 
@@ -20,7 +20,7 @@ console.log('📋 Agenda initializing...');
 // ✅ Agenda instance
 const agenda = new Agenda({
   db: {
-    address: process.env.MONGO_URI,
+    address: process.env.MONGODB_URI,
     collection: 'agendaJobs'
   },
   processEvery: '5 seconds',  // ✅ Faster checking
