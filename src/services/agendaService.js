@@ -1,4 +1,4 @@
-// src/services/agendaService.js — COMPLETE FIXED
+// src/services/agendaService.js — Complete Production Ready
 
 const Agenda = require('agenda');
 const Appointment = require('../models/Appointment');
@@ -23,7 +23,7 @@ const agenda = new Agenda({
     address: process.env.MONGODB_URI,
     collection: 'agendaJobs'
   },
-  processEvery: '5 seconds',  // ✅ Faster checking
+  processEvery: '5 seconds',
   defaultConcurrency: 5,
   maxConcurrency: 10,
   defaultLockLimit: 1,
@@ -62,16 +62,6 @@ setInterval(async () => {
     // Silent fail
   }
 }, 5000);
-
-// ✅ Keep event loop active with MongoDB ping
-setInterval(async () => {
-  try {
-    const count = await agenda._db.collection('agendaJobs').countDocuments({ limit: 1 });
-    // console.log(`📊 Agenda active`);
-  } catch (error) {
-    // Silent fail
-  }
-}, 10000);
 
 // ============ GENERATE TRACKING TOKEN ============
 const generateTrackingToken = () => {
@@ -124,18 +114,6 @@ const sendReminder = async (appointmentId, reminderType) => {
     if (!clinic.smtpHost || !clinic.fromEmail || !clinic.emailPassword) {
       console.log(`❌ Email not configured for clinic ${clinic._id}`);
       return { success: false, error: 'Email not configured' };
-    }
-    
-    // ✅ Check patient exists
-    if (!appointment.patientId) {
-      console.log(`❌ Patient not found for ${appointmentId}`);
-      return { success: false, error: 'Patient not found' };
-    }
-    
-    // ✅ Check doctor exists
-    if (!appointment.doctorId) {
-      console.log(`❌ Doctor not found for ${appointmentId}`);
-      return { success: false, error: 'Doctor not found' };
     }
     
     // ✅ Generate tracking token

@@ -25,6 +25,7 @@ dns.setServers(['8.8.8.8', '1.1.1.1']);
 dotenv.config();
 
 // ============ LOAD SERVICES ============
+
 // ✅ Agenda (Reminder System)
 require('./src/services/agendaService');
 
@@ -34,6 +35,10 @@ require('./src/scheduler/noResponseHandler');
 // ✅ Report Scheduler
 require("./src/scheduler/reportScheduler");
 
+// ❌ DISABLED - Old systems (commented out)
+// require('./src/scheduler/reminderScheduler');
+// require('./src/scheduler/cronScheduler');
+// require('./src/queues/backupQueue');
 
 // ============ CONNECT DATABASE ============
 connectDB();
