@@ -1,4 +1,4 @@
-// src/services/agendaService.js — COMPLETE PRODUCTION READY
+// src/services/agendaService.js — COMPLETE FIXED
 
 const Agenda = require('agenda');
 const Appointment = require('../models/Appointment');
@@ -9,22 +9,21 @@ const ReminderLog = require('../models/ReminderLog');
 const { sendReminderEmail } = require('./emailService');
 const crypto = require('crypto');
 
-// ✅ FIXED: MONGODB_URI check (not MONGODB_URI)
-if (!process.env.MONGODB_URI) {
-  console.error('❌ MONGODB_URI is not defined!');
-  console.error('📋 Please set MONGODB_URI in .env file');
+// ✅ Check MONGO_URI
+if (!process.env.MONGO_URI) {
+  console.error('❌ MONGO_URI is not defined!');
   process.exit(1);
 }
 
 console.log('📋 Agenda initializing...');
 
-// ✅ FIXED: MONGODB_URI use (not MONGODB_URI)
+// ✅ Agenda instance
 const agenda = new Agenda({
   db: {
-    address: process.env.MONGODB_URI,
+    address: process.env.MONGO_URI,
     collection: 'agendaJobs'
   },
-  processEvery: '10 seconds',  // ✅ Faster check (was 30 seconds)
+  processEvery: '5 seconds',  // ✅ Faster checking
   defaultConcurrency: 5,
   maxConcurrency: 10,
   defaultLockLimit: 1,
@@ -53,26 +52,24 @@ agenda.on('fail', (error, job) => {
   console.error(`❌ [Job] ${job.attrs.name} failed:`, error.message);
 });
 
-// ============ KEEP ALIVE — PREVENT SLEEP ============
+// ============ FORCE WORKER TO STAY ACTIVE ============
 
-// ✅ Simple keep-alive: Just check jobs count
+// ✅ Force process jobs every 5 seconds
 setInterval(async () => {
   try {
-    // Simple query to keep connection alive
-    const count = await agenda.jobs({ limit: 1 });
-    console.log(`💓 Agenda alive (${new Date().toISOString()})`);
-  } catch (error) {
-    console.error('❌ Heartbeat error:', error);
-  }
-}, 30000); // Every 30 seconds
-
-// ✅ Force process every 10 seconds
-setInterval(async () => {
-  try {
-    // This keeps the event loop active
     await agenda._processJobs();
   } catch (error) {
-    // Silent fail - ignore
+    // Silent fail
+  }
+}, 5000);
+
+// ✅ Keep event loop active with MongoDB ping
+setInterval(async () => {
+  try {
+    const count = await agenda._db.collection('agendaJobs').countDocuments({ limit: 1 });
+    // console.log(`📊 Agenda active`);
+  } catch (error) {
+    // Silent fail
   }
 }, 10000);
 
