@@ -471,6 +471,7 @@ router.post("/login", async (req, res) => {
         isVerified: user.isVerified,
         plan: user.plan,
         isTwoFactorEnabled: user.isTwoFactorEnabled,
+        role: user.role || 'user',  
       },
     });
   } catch (error) {

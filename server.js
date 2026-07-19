@@ -16,6 +16,9 @@ const patientRoutes = require("./src/routes/patientRoutes");
 const reminderLogRoutes = require("./src/routes/reminderLogRoutes");
 const trackingRoutes = require("./src/routes/trackingRoutes");
 const integrationRoutes = require("./src/routes/integrationRoutes");
+const blogRoutes = require('./src/routes/blogRoutes');
+const blogPublicRoutes = require('./src/routes/blogPublicRoutes');
+const adminRoutes = require('./src/routes/adminRoutes');
 
 const dns = require('dns');
 
@@ -67,6 +70,16 @@ app.use("/api", integrationRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/tracking", trackingRoutes);
 app.use("/api/dashboard", require("./src/routes/dashboardRoutes"));
+
+
+// ============ BLOG ROUTES ============
+app.use('/api', blogRoutes);          // Admin/Protected routes
+app.use('/api', blogPublicRoutes);    // Public routes
+
+// ============ ADMIN ROUTES ============
+app.use('/api', adminRoutes);
+
+
 
 // ============ HEALTH CHECK ============
 app.get("/api/health", (req, res) => {

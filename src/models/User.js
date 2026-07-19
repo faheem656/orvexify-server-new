@@ -71,7 +71,11 @@ const userSchema = new mongoose.Schema(
       sparse: true,
       default: null,
     },
-
+    role: {
+      type: String,
+      enum: ["user", "admin", "super_admin"],
+      default: "user",
+    },
     // Settings
     dateFormat: {
       type: String,

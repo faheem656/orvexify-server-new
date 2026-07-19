@@ -6,6 +6,7 @@ const Appointment = require('../models/Appointment');
 const Patient = require('../models/Patient');
 const Doctor = require('../models/Doctor');
 const { scheduleAppointmentReminders } = require('../services/reminderScheduler');
+const ReminderLog = require('../models/ReminderLog');
 
 // ============ GET ALL APPOINTMENTS ============
 router.get('/appointments', protect, async (req, res) => {
