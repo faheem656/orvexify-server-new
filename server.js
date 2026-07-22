@@ -19,6 +19,10 @@ const integrationRoutes = require("./src/routes/integrationRoutes");
 const blogRoutes = require('./src/routes/blogRoutes');
 const blogPublicRoutes = require('./src/routes/blogPublicRoutes');
 const adminRoutes = require('./src/routes/adminRoutes');
+const path = require('path');
+
+const uploadsPath = path.join(__dirname, 'uploads');
+
 
 const dns = require('dns');
 
@@ -48,6 +52,7 @@ connectDB();
 
 // ============ EXPRESS APP ============
 const app = express();
+app.use('/uploads', express.static(uploadsPath));
 
 // Middleware
 app.use(cors());

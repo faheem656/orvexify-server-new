@@ -1,5 +1,4 @@
-// src/routes/blogPublicRoutes.js — Public Routes
-
+// src/routes/blogPublicRoutes.js
 const express = require('express');
 const router = express.Router();
 const BlogPost = require('../models/BlogPost');
@@ -7,11 +6,14 @@ const BlogCategory = require('../models/BlogCategory');
 const BlogTag = require('../models/BlogTag');
 
 // ============ GET PUBLIC POSTS ============
-router.get('/blog', async (req, res) => {
+router.get('/public/blog', async (req, res) => {
   try {
     const { page = 1, limit = 10, category, tag, search } = req.query;
 
-    let query = { status: 'published', isPublished: true };
+    // ✅ Fixed query
+    let query = { 
+      status: 'published'
+    };
 
     if (category) {
       const categoryDoc = await BlogCategory.findOne({ slug: category });
@@ -30,15 +32,24 @@ router.get('/blog', async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const posts = await BlogPost.find(query)
-      .populate('categories', 'name slug')
+      .populate('categories', 'name slug color')
       .populate('tags', 'name slug')
-      .populate('author', 'userId bio avatar')
+      .populate({
+        path: 'author',
+        populate: {
+          path: 'userId',
+          model: 'User',
+          select: 'fullName email avatar'
+        }
+      })
       .sort({ isSticky: -1, publishedAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
       .lean();
 
     const total = await BlogPost.countDocuments(query);
+
+    console.log(`✅ Found ${posts.length} posts`);
 
     res.json({
       success: true,
@@ -61,14 +72,24 @@ router.get('/blog', async (req, res) => {
 });
 
 // ============ GET SINGLE POST (PUBLIC) ============
-router.get('/blog/:slug', async (req, res) => {
+router.get('/public/blog/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
 
-    const post = await BlogPost.findOne({ slug, status: 'published' })
-      .populate('categories', 'name slug')
+    const post = await BlogPost.findOne({ 
+      slug, 
+      status: 'published' 
+    })
+      .populate('categories', 'name slug color')
       .populate('tags', 'name slug')
-      .populate('author', 'userId bio avatar socialLinks')
+      .populate({
+        path: 'author',
+        populate: {
+          path: 'userId',
+          model: 'User',
+          select: 'fullName email avatar'
+        }
+      })
       .populate('relatedPosts', 'title slug featuredImage excerpt')
       .lean();
 
@@ -99,7 +120,7 @@ router.get('/blog/:slug', async (req, res) => {
 });
 
 // ============ GET CATEGORIES (PUBLIC) ============
-router.get('/blog/categories/all', async (req, res) => {
+router.get('/public/blog/categories/all', async (req, res) => {
   try {
     const categories = await BlogCategory.find({ isActive: true })
       .sort({ postCount: -1 })
@@ -120,7 +141,7 @@ router.get('/blog/categories/all', async (req, res) => {
 });
 
 // ============ GET TAGS (PUBLIC) ============
-router.get('/blog/tags/all', async (req, res) => {
+router.get('/public/blog/tags/all', async (req, res) => {
   try {
     const tags = await BlogTag.find({ isActive: true })
       .sort({ postCount: -1 })
@@ -141,7 +162,7 @@ router.get('/blog/tags/all', async (req, res) => {
 });
 
 // ============ SEARCH POSTS ============
-router.get('/blog/search', async (req, res) => {
+router.get('/public/blog/search', async (req, res) => {
   try {
     const { q } = req.query;
 
@@ -157,6 +178,14 @@ router.get('/blog/search', async (req, res) => {
       $text: { $search: q }
     })
     .select('title slug excerpt featuredImage publishedAt')
+    .populate({
+      path: 'author',
+      populate: {
+        path: 'userId',
+        model: 'User',
+        select: 'fullName'
+      }
+    })
     .limit(10)
     .lean();
 
@@ -175,14 +204,21 @@ router.get('/blog/search', async (req, res) => {
 });
 
 // ============ FEATURED POSTS ============
-router.get('/blog/featured', async (req, res) => {
+router.get('/public/blog/featured', async (req, res) => {
   try {
     const posts = await BlogPost.find({
       status: 'published',
       isFeatured: true
     })
-    .populate('categories', 'name slug')
-    .populate('author', 'userId bio avatar')
+    .populate('categories', 'name slug color')
+    .populate({
+      path: 'author',
+      populate: {
+        path: 'userId',
+        model: 'User',
+        select: 'fullName email avatar'
+      }
+    })
     .sort({ publishedAt: -1 })
     .limit(5)
     .lean();

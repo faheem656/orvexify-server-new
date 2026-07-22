@@ -18,6 +18,10 @@ const blogPostSchema = new mongoose.Schema({
     trim: true
     // ❌ index: true hatao (duplicate)
   },
+    featuredImagePublicId: { // ✅ Add this
+    type: String,
+    default: "",
+  },
   excerpt: {
     type: String,
     required: true,

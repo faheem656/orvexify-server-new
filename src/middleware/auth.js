@@ -36,24 +36,24 @@ const protect = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.id).select("-passwordHash");
-    
 
+    if (
+      decoded.version !== undefined &&
+      decoded.version !== user.tokenVersion
+    ) {
+      // Blacklist the old token
+      await TokenBlacklist.create({
+        token,
+        userId: user._id,
+        expiresAt: new Date(decoded.exp * 1000),
+      });
 
-      if (decoded.version !== undefined && decoded.version !== user.tokenVersion) {
-    // Blacklist the old token
-    await TokenBlacklist.create({
-      token,
-      userId: user._id,
-      expiresAt: new Date(decoded.exp * 1000),
-    });
-    
-    return res.status(401).json({
-      success: false,
-      message: "Session expired. Please login again.",
-    });
-  }
+      return res.status(401).json({
+        success: false,
+        message: "Session expired. Please login again.",
+      });
+    }
 
-  
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -68,24 +68,34 @@ const protect = async (req, res, next) => {
       });
     }
 
-    if (decoded.version !== undefined && decoded.version !== user.tokenVersion) {
+    if (
+      decoded.version !== undefined &&
+      decoded.version !== user.tokenVersion
+    ) {
       await TokenBlacklist.create({
         token,
         userId: user._id,
         expiresAt: new Date(decoded.exp * 1000),
         reason: "version_mismatch",
       });
-      
+
       return res.status(401).json({
         success: false,
         message: "Session expired. Please login again.",
       });
     }
 
+    if (!user.isActive) {
+      return res.status(403).json({
+        success: false,
+        message: "Account is deactivated. Please contact support.",
+      });
+    }
+
     req.user = user;
     req.token = token;
     req.tokenVersion = decoded.version;
-    
+
     next();
   } catch (error) {
     if (error.name === "JsonWebTokenError") {
@@ -112,13 +122,13 @@ const protect = async (req, res, next) => {
 const generateToken = (user, expiresIn = null) => {
   // Ensure we have a valid expiry value
   const expiry = expiresIn || process.env.JWT_EXPIRES_IN || "7d";
-  
+
   const payload = {
     id: user._id,
     email: user.email,
     version: user.tokenVersion || 0,
   };
-  
+
   try {
     return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: expiry });
   } catch (error) {
