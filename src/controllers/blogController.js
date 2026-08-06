@@ -9,15 +9,32 @@ const { cloudinary } = require("../config/cloudinary");
 // ============ HELPER FUNCTIONS ============
 // ============================================
 
+// ✅ FIXED: Generate clean slug without random IDs
 const generateSlug = (title) => {
-  return (
-    title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") +
-    "-" +
-    Date.now().toString(36)
-  );
+  if (!title) return "untitled";
+  
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")  // Replace special chars with -
+    .replace(/^-+|-+$/g, "");      // Remove leading/trailing -
+};
+
+// ✅ Generate unique slug with suffix if needed
+const generateUniqueSlug = async (title, excludeId = null) => {
+  const baseSlug = generateSlug(title);
+  let slug = baseSlug;
+  let counter = 1;
+  
+  // Check if slug exists
+  let existing = await BlogPost.findOne({ slug, _id: { $ne: excludeId } });
+  
+  while (existing) {
+    slug = `${baseSlug}-${counter}`;
+    existing = await BlogPost.findOne({ slug, _id: { $ne: excludeId } });
+    counter++;
+  }
+  
+  return slug;
 };
 
 // ✅ IMPROVED: Extract public ID from Cloudinary URL
@@ -26,23 +43,18 @@ const extractPublicId = (url) => {
 
   console.log("📌 Extracting publicId from:", url);
 
-  // Method 1: Standard Cloudinary URL
-  // https://res.cloudinary.com/cloud-name/image/upload/v1234567890/folder/image.jpg
   let match = url.match(/\/upload\/(?:v\d+\/)?(.+?)\./);
   if (match) {
     console.log("📌 Extracted publicId (Method 1):", match[1]);
     return match[1];
   }
 
-  // Method 2: If URL has folder structure
-  // https://res.cloudinary.com/cloud-name/image/upload/folder/image.jpg
   match = url.match(/\/upload\/(.+?)\./);
   if (match) {
     console.log("📌 Extracted publicId (Method 2):", match[1]);
     return match[1];
   }
 
-  // Method 3: If only publicId is passed (not full URL)
   if (!url.includes("/")) {
     console.log("📌 Using publicId as is:", url);
     return url;
@@ -76,7 +88,6 @@ const deleteImageFromCloudinary = async (publicId) => {
   }
 };
 
-
 // ============================================
 // ============ BLOG POSTS ============
 // ============================================
@@ -86,6 +97,7 @@ const createPost = async (req, res) => {
   try {
     const {
       title,
+      slug, // ✅ Accept slug from frontend
       content,
       excerpt,
       categories,
@@ -128,11 +140,20 @@ const createPost = async (req, res) => {
       });
     }
 
-    const slug = generateSlug(title);
+    // ✅ Generate slug: use provided slug or generate from title
+    let finalSlug;
+    if (slug && slug.trim()) {
+      finalSlug = slug.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    } else {
+      finalSlug = generateSlug(title);
+    }
+    
+    // ✅ Ensure unique slug
+    finalSlug = await generateUniqueSlug(finalSlug);
 
     const post = await BlogPost.create({
       title,
-      slug,
+      slug: finalSlug,
       content,
       excerpt,
       categories: categories || [],
@@ -162,7 +183,7 @@ const createPost = async (req, res) => {
     if (categories && categories.length > 0) {
       await BlogCategory.updateMany(
         { _id: { $in: categories } },
-        { $inc: { postCount: 1 } },
+        { $inc: { postCount: 1 } }
       );
     }
 
@@ -170,7 +191,7 @@ const createPost = async (req, res) => {
     if (tags && tags.length > 0) {
       await BlogTag.updateMany(
         { _id: { $in: tags } },
-        { $inc: { postCount: 1 } },
+        { $inc: { postCount: 1 } }
       );
     }
 
@@ -204,6 +225,7 @@ const getAllPosts = async (req, res) => {
       search,
       page = 1,
       limit = 20,
+      sort = "-createdAt",
     } = req.query;
 
     let query = {};
@@ -218,20 +240,22 @@ const getAllPosts = async (req, res) => {
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
+    const sortField = sort.startsWith("-") ? sort.substring(1) : sort;
+    const sortOrder = sort.startsWith("-") ? -1 : 1;
 
     const posts = await BlogPost.find(query)
-      .populate("categories", "name slug")
+      .populate("categories", "name slug color")
       .populate("tags", "name slug")
       .populate({
         path: "author",
         populate: {
           path: "userId",
           model: "User",
-          select: "fullName email",
+          select: "fullName email avatar",
         },
       })
-      .populate("relatedPosts", "title slug")
-      .sort({ createdAt: -1 })
+      .populate("relatedPosts", "title slug featuredImage excerpt")
+      .sort({ [sortField]: sortOrder })
       .skip(skip)
       .limit(parseInt(limit))
       .lean();
@@ -312,15 +336,79 @@ const updatePost = async (req, res) => {
       });
     }
 
-    if (updates.title && updates.title !== post.title) {
-      updates.slug = generateSlug(updates.title);
+    // ✅ Handle slug update
+    if (updates.slug && updates.slug !== post.slug) {
+      const cleanSlug = updates.slug
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      
+      if (cleanSlug) {
+        updates.slug = await generateUniqueSlug(cleanSlug, id);
+      } else {
+        delete updates.slug;
+      }
+    }
+
+    // ✅ If title changed and slug not manually set
+    if (updates.title && updates.title !== post.title && !updates.slug) {
+      updates.slug = await generateUniqueSlug(updates.title, id);
     }
 
     const updatedPost = await BlogPost.findByIdAndUpdate(
       id,
       { $set: updates },
-      { new: true, runValidators: true },
+      { new: true, runValidators: true }
     );
+
+    // ✅ Update category/tag counts if changed
+    if (updates.categories) {
+      const oldCategories = post.categories.map(c => c.toString());
+      const newCategories = updates.categories.map(c => c.toString());
+      
+      // Remove from old categories
+      for (const catId of oldCategories) {
+        if (!newCategories.includes(catId)) {
+          await BlogCategory.updateOne(
+            { _id: catId },
+            { $inc: { postCount: -1 } }
+          );
+        }
+      }
+      
+      // Add to new categories
+      for (const catId of newCategories) {
+        if (!oldCategories.includes(catId)) {
+          await BlogCategory.updateOne(
+            { _id: catId },
+            { $inc: { postCount: 1 } }
+          );
+        }
+      }
+    }
+
+    if (updates.tags) {
+      const oldTags = post.tags.map(t => t.toString());
+      const newTags = updates.tags.map(t => t.toString());
+      
+      for (const tagId of oldTags) {
+        if (!newTags.includes(tagId)) {
+          await BlogTag.updateOne(
+            { _id: tagId },
+            { $inc: { postCount: -1 } }
+          );
+        }
+      }
+      
+      for (const tagId of newTags) {
+        if (!oldTags.includes(tagId)) {
+          await BlogTag.updateOne(
+            { _id: tagId },
+            { $inc: { postCount: 1 } }
+          );
+        }
+      }
+    }
 
     res.json({
       success: true,
@@ -337,8 +425,7 @@ const updatePost = async (req, res) => {
   }
 };
 
-
-// ✅ FIXED: DELETE POST with Cloudinary image deletion
+// DELETE POST
 const deletePost = async (req, res) => {
   try {
     const { id } = req.params;
@@ -366,7 +453,6 @@ const deletePost = async (req, res) => {
 
     // ✅ 2. Delete images from content (if any)
     if (post.content) {
-      // Find all Cloudinary image URLs in content
       const cloudinaryUrls = post.content.match(/https?:\/\/res\.cloudinary\.com\/[^\s"']+\.(?:jpg|jpeg|png|gif|webp)/g) || [];
       
       console.log(`📌 Found ${cloudinaryUrls.length} images in content`);
@@ -419,7 +505,6 @@ const deletePost = async (req, res) => {
 // ============ IMAGE UPLOAD ============
 // ============================================
 
-// ✅ Upload Image - Cloudinary
 const uploadImage = async (req, res) => {
   try {
     if (!req.file) {
@@ -429,10 +514,7 @@ const uploadImage = async (req, res) => {
       });
     }
 
-    // Cloudinary returns URL in req.file.path
     const imageUrl = req.file.path;
-    
-    // ✅ Extract public ID from Cloudinary URL
     const extractedPublicId = extractPublicId(imageUrl);
 
     console.log("✅ Image uploaded to Cloudinary:", imageUrl);
@@ -458,7 +540,6 @@ const uploadImage = async (req, res) => {
   }
 };
 
-// ✅ FIXED: Delete Image from Cloudinary
 const deleteImage = async (req, res) => {
   try {
     let { publicId } = req.params;
@@ -472,10 +553,8 @@ const deleteImage = async (req, res) => {
       });
     }
 
-    // ✅ Clean the public ID
     let cleanPublicId = publicId;
     
-    // If it's a full URL, extract the public ID
     if (publicId.includes('cloudinary') || publicId.includes('res.cloudinary.com')) {
       const extracted = extractPublicId(publicId);
       if (extracted) {
@@ -483,14 +562,12 @@ const deleteImage = async (req, res) => {
       }
     }
     
-    // Remove any query parameters
     cleanPublicId = cleanPublicId.split('?')[0];
     
     console.log("📌 Cleaned publicId for deletion:", cleanPublicId);
 
-    // ✅ Delete from Cloudinary
     const result = await cloudinary.uploader.destroy(cleanPublicId, {
-      invalidate: true // Invalidate CDN cache
+      invalidate: true
     });
 
     console.log("📌 Cloudinary delete result:", result);
@@ -521,7 +598,6 @@ const deleteImage = async (req, res) => {
     });
   }
 };
-
 
 // ============================================
 // ============ BLOG CATEGORIES ============
@@ -671,10 +747,9 @@ const deleteCategory = async (req, res) => {
       });
     }
 
-    // Remove category from all posts
     await BlogPost.updateMany(
       { categories: id },
-      { $pull: { categories: id } },
+      { $pull: { categories: id } }
     );
 
     await category.deleteOne();
@@ -837,7 +912,6 @@ const deleteTag = async (req, res) => {
       });
     }
 
-    // Remove tag from all posts
     await BlogPost.updateMany({ tags: id }, { $pull: { tags: id } });
 
     await tag.deleteOne();
