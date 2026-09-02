@@ -55,8 +55,14 @@ const app = express();
 app.use('/uploads', express.static(uploadsPath));
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+const corsOptions = {
+  origin: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+};
+
+app.use(cors(corsOptions));app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ============ ROUTES ============

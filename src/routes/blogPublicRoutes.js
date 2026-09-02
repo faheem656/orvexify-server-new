@@ -204,10 +204,10 @@ router.get('/public/blog/search', async (req, res) => {
 });
 
 // ============ FEATURED POSTS ============
-router.get('/public/blog/featured', async (req, res) => {
+router.get('/public/blogs/featured', async (req, res) => {
   try {
     const posts = await BlogPost.find({
-      status: 'published',
+      isPublished: true,
       isFeatured: true
     })
     .populate('categories', 'name slug color')

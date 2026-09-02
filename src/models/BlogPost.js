@@ -16,7 +16,6 @@ const blogPostSchema = new mongoose.Schema({
     unique: true,  // ✅ Sirf yahan unique index
     lowercase: true,
     trim: true
-    // ❌ index: true hatao (duplicate)
   },
     featuredImagePublicId: { // ✅ Add this
     type: String,
