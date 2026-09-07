@@ -19,6 +19,10 @@ const integrationRoutes = require("./src/routes/integrationRoutes");
 const blogRoutes = require('./src/routes/blogRoutes');
 const blogPublicRoutes = require('./src/routes/blogPublicRoutes');
 const adminRoutes = require('./src/routes/adminRoutes');
+const billingRoutes = require('./src/routes/billing.routes');
+
+const { stripeWebhook } = require('./src/controllers/billing.controller');
+
 const path = require('path');
 
 const uploadsPath = path.join(__dirname, 'uploads');
@@ -54,6 +58,14 @@ connectDB();
 const app = express();
 app.use('/uploads', express.static(uploadsPath));
 
+
+
+app.post(
+  '/api/billing/webhook',
+  express.raw({ type: 'application/json' }),
+  stripeWebhook
+);
+
 // Middleware
 const corsOptions = {
   origin: true,
@@ -81,6 +93,7 @@ app.use("/api", integrationRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/tracking", trackingRoutes);
 app.use("/api/dashboard", require("./src/routes/dashboardRoutes"));
+app.use('/api/billing', billingRoutes);
 
 
 // ============ BLOG ROUTES ============

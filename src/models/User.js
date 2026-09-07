@@ -41,6 +41,16 @@ const userSchema = new mongoose.Schema(
       enum: ["free", "starter", "pro"],
       default: "free",
     },
+     planKey: {
+      type: String,
+      enum: ['starter', 'growth', 'pro'],
+      default: 'starter',
+    },
+    billingStatus: {
+      type: String,
+      enum: ['unpaid', 'active', 'canceling', 'canceled', 'past_due'],
+      default: 'unpaid',
+    },
     timezone: {
       type: String,
       default: "Asia/Karachi",

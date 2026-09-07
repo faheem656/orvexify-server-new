@@ -28,7 +28,8 @@
     "nodemailer": "^6.10.1",
     "qrcode": "^1.5.4",
     "slugify": "^1.6.9",
-    "speakeasy": "^2.0.0"
+    "speakeasy": "^2.0.0",
+    "stripe": "^22.6.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
