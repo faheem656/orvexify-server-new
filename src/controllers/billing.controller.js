@@ -1049,6 +1049,101 @@ async function createPortalSession(user) {
   };
 }
 
+async function listCardPaymentMethodIds(customerId) {
+  const stripe = getStripe();
+  const ids = {};
+  const add = (pm) => {
+    const id = idOf(pm);
+    if (id && String(id).indexOf('pm_') === 0) ids[id] = true;
+  };
+
+  try {
+    const listed = await stripe.paymentMethods.list({
+      customer: customerId,
+      type: 'card',
+      limit: 20,
+    });
+    (listed.data || []).forEach(add);
+  } catch (err) {
+    console.error('billing.listCardPms', err.message);
+  }
+
+  try {
+    if (
+      stripe.customers &&
+      typeof stripe.customers.listPaymentMethods === 'function'
+    ) {
+      const listed = await stripe.customers.listPaymentMethods(customerId, {
+        type: 'card',
+        limit: 20,
+      });
+      (listed.data || []).forEach(add);
+    }
+  } catch (err) {
+    console.error('billing.listCustomerCardPms', err.message);
+  }
+
+  return Object.keys(ids);
+}
+
+async function clearDefaultPaymentMethod(sub) {
+  const stripe = getStripe();
+
+  if (sub.stripeSubscriptionId) {
+    try {
+      await stripe.subscriptions.update(sub.stripeSubscriptionId, {
+        default_payment_method: '',
+      });
+    } catch (err) {
+      console.error('billing.clearSubPm', err.message);
+    }
+  }
+
+  try {
+    await stripe.customers.update(sub.stripeCustomerId, {
+      invoice_settings: { default_payment_method: '' },
+    });
+  } catch (err) {
+    console.error('billing.clearDefaultPm', err.message);
+  }
+}
+
+async function removeSavedCards(user) {
+  const sub = await ensureSubscription(userIdOf(user));
+  if (!sub.stripeCustomerId || !getStripe()) {
+    throw httpError('No card on file', 'NO_PAYMENT_METHOD', 400);
+  }
+
+  const stripe = getStripe();
+  await clearDefaultPaymentMethod(sub);
+
+  const pmIds = await listCardPaymentMethodIds(sub.stripeCustomerId);
+  if (!pmIds.length) {
+    throw httpError('No card on file', 'NO_PAYMENT_METHOD', 400);
+  }
+
+  let detached = 0;
+  for (let i = 0; i < pmIds.length; i += 1) {
+    try {
+      await stripe.paymentMethods.detach(pmIds[i]);
+      detached += 1;
+    } catch (err) {
+      console.error('billing.detach', err.message);
+    }
+  }
+
+  if (!detached) {
+    throw httpError('Could not remove this card', 'CARD_REMOVE_FAILED', 400);
+  }
+
+  return {
+    paymentMethod: null,
+    paymentMethods: [],
+    message:
+      'Card removed. Add a card before the next invoice or the charge can fail.',
+  };
+}
+
 async function confirmCardUpdate(user, sessionId) {
   if (!sessionId || typeof sessionId !== 'string') {
     throw httpError('Missing checkout session', 'BAD_SESSION', 400);
@@ -1604,6 +1699,17 @@ async function postCard(req, res) {
   }
 }
 
+async function deleteCard(req, res) {
+  try {
+    const data = await removeSavedCards(actor(req));
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
+const postCardRemove = deleteCard;
+
 async function postConfirm(req, res) {
   try {
     const body = req.body || {};
@@ -1678,6 +1784,8 @@ module.exports = {
   postSubscribe,
   postPortal,
   postCard,
+  deleteCard,
+  postCardRemove,
   postConfirm,
   getInvoices,
   getInvoiceById,

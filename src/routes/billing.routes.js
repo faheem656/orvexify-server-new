@@ -25,6 +25,7 @@ const {
   postSubscribe,
   postPortal,
   postCard,
+  deleteCard,
   postConfirm,
   getInvoices,
   getInvoiceById,
@@ -54,6 +55,8 @@ router.delete('/waitlist', deleteWaitlist);
 router.post('/subscribe', postSubscribe);
 router.post('/portal', postPortal);
 router.post('/card', postCard);
+router.post('/card/remove', deleteCard);
+router.delete('/card', deleteCard);
 router.post('/confirm', postConfirm);
 router.post('/cancel', postCancel);
 
