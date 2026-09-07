@@ -215,6 +215,42 @@ function unixToDate(unix) {
   return new Date(unix * 1000);
 }
 
+function idOf(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  return value.id || null;
+}
+
+function sessionSubscriptionId(session) {
+  return (
+    idOf(session && session.subscription) ||
+    idOf(
+      session &&
+        session.subscription_details &&
+        session.subscription_details.subscription
+    )
+  );
+}
+
+function invoiceSubscriptionId(inv) {
+  return (
+    idOf(inv && inv.subscription) ||
+    idOf(
+      inv &&
+        inv.parent &&
+        inv.parent.subscription_details &&
+        inv.parent.subscription_details.subscription
+    ) ||
+    idOf(
+      inv &&
+        inv.lines &&
+        inv.lines.data &&
+        inv.lines.data[0] &&
+        inv.lines.data[0].subscription
+    )
+  );
+}
+
 function fail(res, err) {
   const status = err.status || 500;
   if (status >= 500) console.error('billing', err);
@@ -387,11 +423,36 @@ function serializeInvoice(doc) {
 async function getOverview(user) {
   const userId = userIdOf(user);
   const sub = await ensureSubscription(userId);
-  const [usage, waitlist, invoices] = await Promise.all([
+
+  if (
+    sub.stripeCustomerId &&
+    process.env.STRIPE_SECRET_KEY &&
+    (sub.status === 'unpaid' || !sub.stripeSubscriptionId)
+  ) {
+    try {
+      await syncCustomerFromStripe(sub);
+    } catch (err) {
+      console.error('billing.syncCustomerFromStripe', err.message);
+    }
+  }
+
+  let [usage, waitlist, invoices] = await Promise.all([
     getUsage(userId, sub.planKey),
     waitlistMap(userId),
     Invoice.find({ user: userId }).sort({ createdAt: -1 }).limit(12).lean(),
   ]);
+
+  if (sub.stripeCustomerId && invoices.length === 0 && process.env.STRIPE_SECRET_KEY) {
+    try {
+      await pullStripeInvoices(sub);
+      invoices = await Invoice.find({ user: userId })
+        .sort({ createdAt: -1 })
+        .limit(12)
+        .lean();
+    } catch (err) {
+      console.error('billing.pullStripeInvoices', err.message);
+    }
+  }
 
   const extras = {
     starter: { onWaitlist: false, isCurrent: sub.planKey === 'starter' },
@@ -405,12 +466,13 @@ async function getOverview(user) {
     },
   };
 
-  let paymentMethod = null;
+  let paymentMethods = [];
   try {
-    paymentMethod = await getDefaultCard(sub);
+    paymentMethods = await listCustomerCards(sub);
   } catch (err) {
-    console.error('billing.getDefaultCard', err.message);
+    console.error('billing.listCustomerCards', err.message);
   }
+  const paymentMethod = paymentMethods[0] || null;
 
   return {
     subscription: serializeSubscription(sub),
@@ -419,6 +481,7 @@ async function getOverview(user) {
     waitlist,
     invoices: invoices.map(serializeInvoice),
     paymentMethod,
+    paymentMethods,
     features: {
       emailReminders: true,
       reminderHours: [24, 2, 0.5],
@@ -598,6 +661,135 @@ async function findSubByStripe(stripeSubId, customerId, userId) {
   return null;
 }
 
+async function pullStripeInvoices(sub) {
+  if (!sub || !sub.stripeCustomerId || !getStripe()) return;
+  const stripe = getStripe();
+  const list = await stripe.invoices.list({
+    customer: sub.stripeCustomerId,
+    limit: 12,
+  });
+  const rows = list.data || [];
+  for (let i = 0; i < rows.length; i += 1) {
+    await recordStripeInvoice(sub, rows[i]);
+  }
+}
+
+async function syncCustomerFromStripe(sub) {
+  if (!sub || !sub.stripeCustomerId || !getStripe()) return sub;
+  const stripe = getStripe();
+  const list = await stripe.subscriptions.list({
+    customer: sub.stripeCustomerId,
+    status: 'all',
+    limit: 10,
+  });
+  const rows = list.data || [];
+  const live =
+    rows.find(
+      (row) =>
+        row.status === 'active' ||
+        row.status === 'trialing' ||
+        row.status === 'past_due'
+    ) || rows[0];
+  if (!live) return sub;
+
+  const intervalHint =
+    (live.metadata && live.metadata.interval) || sub.interval || 'monthly';
+  const planHint =
+    (live.metadata && live.metadata.planKey) || sub.planKey || 'starter';
+  await applyStripeSubscription(sub, live, intervalHint, planHint);
+  await pullStripeInvoices(sub);
+  return sub;
+}
+
+async function applyCompletedCheckoutSession(session, subHint) {
+  const stripe = getStripe();
+  const full = await stripe.checkout.sessions.retrieve(session.id || session, {
+    expand: ['subscription', 'invoice', 'setup_intent'],
+  });
+
+  if (full.mode === 'setup') {
+    const userId =
+      (full.metadata && full.metadata.userId) || full.client_reference_id;
+    const sub =
+      subHint || (await findSubByStripe(null, full.customer, userId));
+    if (sub) await applySetupSessionToSub(sub, full);
+    return { kind: 'setup', subscription: sub || null };
+  }
+
+  if (full.mode !== 'subscription') {
+    return { kind: 'other', subscription: subHint || null };
+  }
+
+  const subId = sessionSubscriptionId(full);
+  if (!subId) {
+    console.error('billing: checkout complete without subscription', full.id);
+    return { kind: 'missing', subscription: subHint || null };
+  }
+
+  const stripeSub =
+    full.subscription &&
+    typeof full.subscription === 'object' &&
+    full.subscription.items
+      ? full.subscription
+      : await stripe.subscriptions.retrieve(subId);
+
+  const userId =
+    (full.metadata && full.metadata.userId) || full.client_reference_id;
+  const interval =
+    (full.metadata && full.metadata.interval) ||
+    (stripeSub.metadata && stripeSub.metadata.interval) ||
+    'monthly';
+  const planKey =
+    (full.metadata && full.metadata.planKey) ||
+    (stripeSub.metadata && stripeSub.metadata.planKey) ||
+    'starter';
+
+  const sub =
+    subHint ||
+    (await findSubByStripe(stripeSub.id, full.customer, userId));
+  if (!sub) {
+    console.error('billing: no mongo sub for checkout', full.id);
+    return { kind: 'missing', subscription: null };
+  }
+
+  const previousId =
+    (full.metadata && full.metadata.previousSubscriptionId) ||
+    (sub.stripeSubscriptionId && sub.stripeSubscriptionId !== stripeSub.id
+      ? sub.stripeSubscriptionId
+      : null);
+
+  await applyStripeSubscription(sub, stripeSub, interval, planKey);
+  await cancelPreviousSubscription(previousId, stripeSub.id);
+
+  let invoice = full.invoice;
+  if (typeof invoice === 'string') {
+    invoice = await stripe.invoices.retrieve(invoice);
+  }
+  if (!invoice && stripeSub.latest_invoice) {
+    invoice =
+      typeof stripeSub.latest_invoice === 'string'
+        ? await stripe.invoices.retrieve(stripeSub.latest_invoice)
+        : stripeSub.latest_invoice;
+  }
+  if (invoice) await recordStripeInvoice(sub, invoice);
+
+  return { kind: 'subscription', subscription: sub };
+}
+
+async function cancelPreviousSubscription(previousId, keepId) {
+  if (!previousId || previousId === keepId || !getStripe()) return;
+  const stripe = getStripe();
+  try {
+    await stripe.subscriptions.cancel(previousId, { prorate: false });
+  } catch (err) {
+    try {
+      await stripe.subscriptions.cancel(previousId);
+    } catch (err2) {
+      console.error('billing.cancelPrevious', err2.message);
+    }
+  }
+}
+
 async function ensureStripeCustomer(user, sub) {
   const stripe = getStripe();
   if (sub.stripeCustomerId) return sub.stripeCustomerId;
@@ -610,6 +802,33 @@ async function ensureStripeCustomer(user, sub) {
   sub.stripeCustomerId = customer.id;
   await sub.save();
   return customer.id;
+}
+
+async function clientSecretFromSubscription(stripe, stripeSub) {
+  let invoice = stripeSub && stripeSub.latest_invoice;
+  if (!invoice) {
+    throw httpError('Could not start card form', 'NO_INVOICE', 500);
+  }
+  if (typeof invoice === 'string') {
+    try {
+      invoice = await stripe.invoices.retrieve(invoice, {
+        expand: ['payment_intent'],
+      });
+    } catch {
+      invoice = await stripe.invoices.retrieve(invoice);
+    }
+  }
+  const pi = invoice.payment_intent;
+  if (pi && typeof pi === 'object' && pi.client_secret) return pi.client_secret;
+  if (typeof pi === 'string') {
+    const full = await stripe.paymentIntents.retrieve(pi);
+    if (full && full.client_secret) return full.client_secret;
+  }
+  const nested =
+    invoice.confirmation_secret &&
+    (invoice.confirmation_secret.client_secret || invoice.confirmation_secret);
+  if (typeof nested === 'string' && nested) return nested;
+  throw httpError('Could not start card form', 'NO_CLIENT_SECRET', 500);
 }
 
 async function createCheckoutSession(user, interval, planKey) {
@@ -629,7 +848,6 @@ async function createCheckoutSession(user, interval, planKey) {
 
   const userId = userIdOf(user);
   const sub = await ensureSubscription(userId);
-  const priceId = priceIdFor(planKey, interval);
   const stripe = getStripe();
 
   if (
@@ -643,109 +861,126 @@ async function createCheckoutSession(user, interval, planKey) {
         400
       );
     }
-
-    const stripeSub = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId);
-    const itemId =
-      stripeSub.items &&
-      stripeSub.items.data &&
-      stripeSub.items.data[0] &&
-      stripeSub.items.data[0].id;
-    if (!itemId) {
-      throw httpError('Could not update Stripe subscription', 'STRIPE_ITEM_MISSING', 500);
-    }
-
-    const updated = await stripe.subscriptions.update(sub.stripeSubscriptionId, {
-      items: [{ id: itemId, price: priceId }],
-      proration_behavior: 'create_prorations',
-      cancel_at_period_end: false,
-      metadata: {
-        userId: String(userId),
-        planKey,
-        interval,
-      },
-    });
-    await applyStripeSubscription(sub, updated, interval, planKey);
-    return {
-      changed: true,
-      url: null,
-      subscription: serializeSubscription(sub),
-    };
   }
 
   const customerId = await ensureStripeCustomer(user, sub);
+  const previousSubscriptionId = sub.stripeSubscriptionId || '';
+  const switching = Boolean(
+    previousSubscriptionId &&
+      (sub.status === 'active' ||
+        sub.status === 'canceling' ||
+        sub.status === 'past_due') &&
+      (sub.planKey !== planKey || sub.interval !== interval)
+  );
 
-  const session = await stripe.checkout.sessions.create({
-    ui_mode: 'embedded_page',
-    mode: 'subscription',
+  const setupIntent = await stripe.setupIntents.create({
     customer: customerId,
-    line_items: [{ price: priceId, quantity: 1 }],
-    redirect_on_completion: 'never',
-    client_reference_id: String(userId),
+    payment_method_types: ['card'],
+    usage: 'off_session',
     metadata: {
       userId: String(userId),
       planKey,
       interval,
-    },
-    subscription_data: {
-      metadata: {
-        userId: String(userId),
-        planKey,
-        interval,
-      },
+      previousSubscriptionId,
+      previousPlanKey: sub.planKey || '',
+      purpose: 'subscribe',
     },
   });
 
   return {
-    embedded: true,
-    clientSecret: session.client_secret,
-    sessionId: session.id,
+    paymentElement: true,
+    clientSecret: setupIntent.client_secret,
+    sessionId: setupIntent.id,
+    setupIntentId: setupIntent.id,
     changed: false,
+    switching,
+    fromPlan: switching ? sub.planKey : null,
+    toPlan: planKey,
   };
 }
 
 function serializeCard(pm) {
-  if (!pm || !pm.card) return null;
-  return {
-    brand: pm.card.brand || 'card',
-    last4: pm.card.last4 || '',
-    expMonth: pm.card.exp_month || null,
-    expYear: pm.card.exp_year || null,
-  };
+  if (!pm) return null;
+  if (pm.card) {
+    return {
+      id: pm.id || null,
+      brand: pm.card.brand || 'card',
+      last4: pm.card.last4 || '',
+      expMonth: pm.card.exp_month || null,
+      expYear: pm.card.exp_year || null,
+    };
+  }
+  return null;
 }
 
-async function getDefaultCard(sub) {
-  if (!sub || !sub.stripeCustomerId || !getStripe()) return null;
+async function listCustomerCards(sub) {
+  if (!sub || !sub.stripeCustomerId || !getStripe()) return [];
   const stripe = getStripe();
+  const byId = {};
 
-  const customer = await stripe.customers.retrieve(sub.stripeCustomerId, {
-    expand: ['invoice_settings.default_payment_method'],
-  });
-  if (!customer || customer.deleted) return null;
+  const add = (pm) => {
+    const row = serializeCard(pm);
+    if (!row || !row.last4) return;
+    const key = row.id || `${row.brand}-${row.last4}`;
+    if (!byId[key]) byId[key] = row;
+  };
 
-  let pm = customer.invoice_settings && customer.invoice_settings.default_payment_method;
-  if (typeof pm === 'string') {
-    pm = await stripe.paymentMethods.retrieve(pm);
+  try {
+    if (stripe.customers && typeof stripe.customers.listPaymentMethods === 'function') {
+      const listed = await stripe.customers.listPaymentMethods(sub.stripeCustomerId, {
+        limit: 10,
+      });
+      (listed.data || []).forEach(add);
+    }
+  } catch (err) {
+    console.error('billing.customers.listPaymentMethods', err.message);
   }
-  if (pm && pm.card) return serializeCard(pm);
+
+  try {
+    const listed = await stripe.paymentMethods.list({
+      customer: sub.stripeCustomerId,
+      type: 'card',
+      limit: 10,
+    });
+    (listed.data || []).forEach(add);
+  } catch (err) {
+    console.error('billing.paymentMethods.list', err.message);
+  }
+
+  try {
+    const customer = await stripe.customers.retrieve(sub.stripeCustomerId, {
+      expand: ['invoice_settings.default_payment_method'],
+    });
+    add(customer.invoice_settings && customer.invoice_settings.default_payment_method);
+  } catch (err) {
+    console.error('billing.customerDefaultPm', err.message);
+  }
 
   if (sub.stripeSubscriptionId) {
-    const stripeSub = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId);
-    const subPm = stripeSub.default_payment_method;
-    if (subPm) {
-      const full =
-        typeof subPm === 'string'
-          ? await stripe.paymentMethods.retrieve(subPm)
-          : subPm;
-      if (full && full.card) return serializeCard(full);
+    try {
+      const stripeSub = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId, {
+        expand: ['default_payment_method'],
+      });
+      add(stripeSub.default_payment_method);
+      const pmId = idOf(stripeSub.default_payment_method);
+      if (pmId) {
+        try {
+          await applyPaymentMethod(sub, pmId);
+        } catch (err) {
+          console.error('billing.applyDefaultPm', err.message);
+        }
+      }
+    } catch (err) {
+      console.error('billing.subDefaultPm', err.message);
     }
   }
 
-  const listed = await stripe.paymentMethods.list({
-    customer: sub.stripeCustomerId,
-    type: 'card',
-    limit: 1,
-  });
-  return listed.data && listed.data[0] ? serializeCard(listed.data[0]) : null;
+  return Object.keys(byId).map((key) => byId[key]);
+}
+
+async function getDefaultCard(sub) {
+  const cards = await listCustomerCards(sub);
+  return cards[0] || null;
 }
 
 async function applyPaymentMethod(sub, paymentMethodId) {
@@ -796,39 +1031,62 @@ async function createPortalSession(user) {
   const customerId = await ensureStripeCustomer(user, sub);
   const stripe = getStripe();
 
-  const session = await stripe.checkout.sessions.create({
-    ui_mode: 'embedded_page',
-    mode: 'setup',
-    currency: 'usd',
+  const setupIntent = await stripe.setupIntents.create({
     customer: customerId,
-    redirect_on_completion: 'never',
-    client_reference_id: String(userId),
+    payment_method_types: ['card'],
+    usage: 'off_session',
     metadata: {
       userId: String(userId),
       purpose: 'update_card',
     },
-    setup_intent_data: {
-      metadata: {
-        userId: String(userId),
-        purpose: 'update_card',
-      },
-    },
   });
 
   return {
-    embedded: true,
-    clientSecret: session.client_secret,
-    sessionId: session.id,
+    paymentElement: true,
+    clientSecret: setupIntent.client_secret,
+    sessionId: setupIntent.id,
+    setupIntentId: setupIntent.id,
   };
 }
 
 async function confirmCardUpdate(user, sessionId) {
-  if (!sessionId || typeof sessionId !== 'string' || sessionId.indexOf('cs_') !== 0) {
+  if (!sessionId || typeof sessionId !== 'string') {
     throw httpError('Missing checkout session', 'BAD_SESSION', 400);
   }
 
   const sub = await ensureSubscription(userIdOf(user));
   const stripe = getStripe();
+
+  if (sessionId.indexOf('seti_') === 0) {
+    const setupIntent = await stripe.setupIntents.retrieve(sessionId);
+    if (setupIntent.status !== 'succeeded') {
+      throw httpError('Finish the card form first', 'SESSION_OPEN', 400);
+    }
+    const customerId = idOf(setupIntent.customer);
+    if (
+      customerId &&
+      sub.stripeCustomerId &&
+      customerId !== sub.stripeCustomerId
+    ) {
+      throw httpError(
+        'This card session is not for this account',
+        'SESSION_MISMATCH',
+        403
+      );
+    }
+    const pmId = idOf(setupIntent.payment_method);
+    if (pmId) await applyPaymentMethod(sub, pmId);
+    const paymentMethod = await getDefaultCard(sub);
+    return {
+      paymentMethod,
+      message: 'Card updated. Future invoices use this card.',
+    };
+  }
+
+  if (sessionId.indexOf('cs_') !== 0) {
+    throw httpError('Missing checkout session', 'BAD_SESSION', 400);
+  }
+
   const session = await stripe.checkout.sessions.retrieve(sessionId, {
     expand: ['setup_intent'],
   });
@@ -858,6 +1116,269 @@ async function confirmCardUpdate(user, sessionId) {
   return {
     paymentMethod,
     message: 'Card updated. Future invoices use this card.',
+  };
+}
+
+async function confirmSubscribeFromSetup(user, setupIntentId, planHint, intervalHint) {
+  const stripe = getStripe();
+  const setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
+  if (setupIntent.status !== 'succeeded') {
+    throw httpError('Finish the card form first', 'SESSION_OPEN', 400);
+  }
+
+  const meta = setupIntent.metadata || {};
+  const planKey = String(planHint || meta.planKey || 'starter').toLowerCase();
+  const interval = String(intervalHint || meta.interval || 'monthly').toLowerCase();
+  if (!getPlan(planKey) || !getPlan(planKey).purchasable) {
+    throw httpError('Unknown plan', 'PLAN_NOT_PURCHASABLE', 400);
+  }
+  if (!INTERVALS.includes(interval)) {
+    throw httpError('interval must be monthly or yearly', 'BAD_INTERVAL', 400);
+  }
+  const priceId = priceIdFor(planKey, interval);
+  if (!priceId) {
+    throw httpError(
+      `Set Stripe price IDs for ${planKey} (monthly and yearly).`,
+      'CHECKOUT_NOT_LIVE',
+      400
+    );
+  }
+
+  const sub = await ensureSubscription(userIdOf(user));
+  const customerId =
+    idOf(setupIntent.customer) || (await ensureStripeCustomer(user, sub));
+  if (
+    customerId &&
+    sub.stripeCustomerId &&
+    customerId !== sub.stripeCustomerId
+  ) {
+    throw httpError(
+      'This session is not for this account',
+      'SESSION_MISMATCH',
+      403
+    );
+  }
+
+  const pmId = idOf(setupIntent.payment_method);
+  if (!pmId) {
+    throw httpError('No card on this payment', 'NO_PAYMENT_METHOD', 400);
+  }
+
+  try {
+    await stripe.paymentMethods.attach(pmId, { customer: customerId });
+  } catch (err) {
+    const msg = (err && err.message) || '';
+    if (err.code !== 'resource_already_exists' && msg.indexOf('already') === -1) {
+      console.error('billing.attachPaymentMethod', msg);
+    }
+  }
+  await applyPaymentMethod(sub, pmId);
+
+  const listed = await stripe.subscriptions.list({
+    customer: customerId,
+    status: 'all',
+    limit: 20,
+  });
+  const already = (listed.data || []).find(
+    (row) =>
+      row.metadata &&
+      row.metadata.setupIntentId === setupIntentId &&
+      (row.status === 'active' || row.status === 'trialing')
+  );
+
+  let stripeSub = already || null;
+  if (!stripeSub) {
+    const previousId =
+      (meta.previousSubscriptionId && String(meta.previousSubscriptionId)) ||
+      sub.stripeSubscriptionId ||
+      '';
+    const subParams = {
+      customer: customerId,
+      items: [{ price: priceId }],
+      default_payment_method: pmId,
+      metadata: {
+        userId: String(userIdOf(user)),
+        planKey,
+        interval,
+        previousSubscriptionId: previousId,
+        setupIntentId,
+      },
+    };
+    try {
+      stripeSub = await stripe.subscriptions.create({
+        ...subParams,
+        payment_behavior: 'error_if_incomplete',
+        payment_settings: {
+          save_default_payment_method: 'on_subscription',
+          payment_method_types: ['card'],
+        },
+      });
+    } catch (err) {
+      try {
+        stripeSub = await stripe.subscriptions.create(subParams);
+      } catch (err2) {
+        throw httpError(
+          err2.message || err.message || 'Card was declined',
+          'PAYMENT_FAILED',
+          400
+        );
+      }
+    }
+  }
+
+  if (stripeSub.status !== 'active' && stripeSub.status !== 'trialing') {
+    const invoiceId = idOf(stripeSub.latest_invoice);
+    if (invoiceId) {
+      try {
+        await stripe.invoices.pay(invoiceId, { payment_method: pmId });
+        stripeSub = await stripe.subscriptions.retrieve(stripeSub.id);
+      } catch (err) {
+        console.error('billing.invoices.pay', err.message);
+      }
+    }
+  }
+
+  if (stripeSub.status !== 'active' && stripeSub.status !== 'trialing') {
+    try {
+      await stripe.subscriptions.cancel(stripeSub.id);
+    } catch (err) {
+      console.error('billing.cancelIncomplete', err.message);
+    }
+    throw httpError('Payment is not complete yet', 'SESSION_OPEN', 400);
+  }
+
+  const previousId =
+    (stripeSub.metadata && stripeSub.metadata.previousSubscriptionId) ||
+    (meta.previousSubscriptionId && String(meta.previousSubscriptionId)) ||
+    sub.stripeSubscriptionId ||
+    '';
+
+  await applyStripeSubscription(sub, stripeSub, interval, planKey);
+  await cancelPreviousSubscription(previousId, stripeSub.id);
+
+  let invoice = stripeSub.latest_invoice;
+  if (typeof invoice === 'string') {
+    try {
+      invoice = await stripe.invoices.retrieve(invoice);
+    } catch {
+      invoice = null;
+    }
+  }
+  if (invoice) await recordStripeInvoice(sub, invoice);
+
+  const invoices = await Invoice.find({ user: sub.user })
+    .sort({ createdAt: -1 })
+    .limit(12)
+    .lean();
+  let paymentMethod = null;
+  try {
+    paymentMethod = await getDefaultCard(sub);
+  } catch (err) {
+    console.error('billing.getDefaultCard', err.message);
+  }
+
+  return {
+    subscription: serializeSubscription(sub),
+    invoices: invoices.map(serializeInvoice),
+    paymentMethod,
+    message: 'Payment confirmed. Your plan is active.',
+  };
+}
+
+async function confirmCheckoutSession(user, sessionId, extras) {
+  extras = extras || {};
+  if (!sessionId || typeof sessionId !== 'string') {
+    throw httpError('Missing checkout session', 'BAD_SESSION', 400);
+  }
+
+  if (sessionId.indexOf('seti_') === 0) {
+    return confirmSubscribeFromSetup(
+      user,
+      sessionId,
+      extras.plan,
+      extras.interval
+    );
+  }
+
+  const sub = await ensureSubscription(userIdOf(user));
+  const stripe = getStripe();
+
+  if (sessionId.indexOf('sub_') === 0) {
+    const stripeSub = await stripe.subscriptions.retrieve(sessionId);
+    const customerId = idOf(stripeSub.customer);
+    if (
+      customerId &&
+      sub.stripeCustomerId &&
+      customerId !== sub.stripeCustomerId
+    ) {
+      throw httpError(
+        'This session is not for this account',
+        'SESSION_MISMATCH',
+        403
+      );
+    }
+    if (stripeSub.status !== 'active' && stripeSub.status !== 'trialing') {
+      throw httpError('Payment is not complete yet', 'SESSION_OPEN', 400);
+    }
+    const previousId =
+      (stripeSub.metadata && stripeSub.metadata.previousSubscriptionId) ||
+      (sub.stripeSubscriptionId && sub.stripeSubscriptionId !== stripeSub.id
+        ? sub.stripeSubscriptionId
+        : null);
+    const interval =
+      (stripeSub.metadata && stripeSub.metadata.interval) || 'monthly';
+    const planKey =
+      (stripeSub.metadata && stripeSub.metadata.planKey) || 'starter';
+    await applyStripeSubscription(sub, stripeSub, interval, planKey);
+    await cancelPreviousSubscription(previousId, stripeSub.id);
+    const invoices = await Invoice.find({ user: sub.user })
+      .sort({ createdAt: -1 })
+      .limit(12)
+      .lean();
+    return {
+      subscription: serializeSubscription(sub),
+      invoices: invoices.map(serializeInvoice),
+      message: 'Payment confirmed. Your plan is active.',
+    };
+  }
+
+  if (sessionId.indexOf('cs_') !== 0) {
+    throw httpError('Missing checkout session', 'BAD_SESSION', 400);
+  }
+
+  const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+  const customerId = idOf(session.customer);
+  if (
+    customerId &&
+    sub.stripeCustomerId &&
+    customerId !== sub.stripeCustomerId
+  ) {
+    throw httpError(
+      'This session is not for this account',
+      'SESSION_MISMATCH',
+      403
+    );
+  }
+
+  if (session.mode === 'setup') {
+    return confirmCardUpdate(user, sessionId);
+  }
+
+  if (session.status !== 'complete' && session.payment_status !== 'paid') {
+    throw httpError('Payment is not complete yet', 'SESSION_OPEN', 400);
+  }
+
+  await applyCompletedCheckoutSession(session, sub);
+  const invoices = await Invoice.find({ user: sub.user })
+    .sort({ createdAt: -1 })
+    .limit(12)
+    .lean();
+
+  return {
+    subscription: serializeSubscription(sub),
+    invoices: invoices.map(serializeInvoice),
+    message: 'Payment confirmed. Your plan is active.',
   };
 }
 
@@ -900,33 +1421,7 @@ async function handleStripeEvent(event) {
   const obj = event.data && event.data.object;
 
   if (type === 'checkout.session.completed') {
-    if (obj.mode === 'setup') {
-      const session = await stripe.checkout.sessions.retrieve(obj.id, {
-        expand: ['setup_intent'],
-      });
-      const userId =
-        (obj.metadata && obj.metadata.userId) || obj.client_reference_id;
-      const sub = await findSubByStripe(null, obj.customer, userId);
-      if (sub) await applySetupSessionToSub(sub, session);
-      return;
-    }
-    if (obj.mode !== 'subscription') return;
-    const userId = (obj.metadata && obj.metadata.userId) || obj.client_reference_id;
-    const interval = (obj.metadata && obj.metadata.interval) || 'monthly';
-    const planKey = (obj.metadata && obj.metadata.planKey) || 'starter';
-    if (!obj.subscription) return;
-
-    const stripeSub = await stripe.subscriptions.retrieve(obj.subscription);
-    const sub = await findSubByStripe(
-      stripeSub.id,
-      obj.customer,
-      userId
-    );
-    if (!sub) {
-      console.error('billing webhook: no subscription for checkout', obj.id);
-      return;
-    }
-    await applyStripeSubscription(sub, stripeSub, interval, planKey);
+    await applyCompletedCheckoutSession(obj, null);
     return;
   }
 
@@ -938,19 +1433,21 @@ async function handleStripeEvent(event) {
     );
     if (!sub) return;
     await applyStripeSubscription(sub, obj, sub.interval);
+    if (
+      type === 'customer.subscription.updated' &&
+      (obj.status === 'active' || obj.status === 'trialing')
+    ) {
+      const previousId = obj.metadata && obj.metadata.previousSubscriptionId;
+      await cancelPreviousSubscription(previousId, obj.id);
+    }
     return;
   }
 
   if (type === 'invoice.paid' || type === 'invoice.payment_failed') {
-    const stripeSubId =
-      typeof obj.subscription === 'string'
-        ? obj.subscription
-        : obj.subscription && obj.subscription.id;
-    const customerId =
-      typeof obj.customer === 'string'
-        ? obj.customer
-        : obj.customer && obj.customer.id;
-    const sub = await findSubByStripe(stripeSubId, customerId, null);
+    const stripeSubId = invoiceSubscriptionId(obj);
+    const customerId = idOf(obj.customer);
+    const userId = obj.metadata && obj.metadata.userId;
+    const sub = await findSubByStripe(stripeSubId, customerId, userId);
     if (!sub) return;
 
     if (type === 'invoice.payment_failed') {
@@ -1097,8 +1594,26 @@ async function postPortal(req, res) {
 
 async function postCard(req, res) {
   try {
-    const sessionId = String((req.body && req.body.sessionId) || '');
+    const sessionId = String(
+      (req.body && (req.body.setupIntentId || req.body.sessionId)) || ''
+    );
     const data = await confirmCardUpdate(actor(req), sessionId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
+async function postConfirm(req, res) {
+  try {
+    const body = req.body || {};
+    const sessionId = String(
+      body.setupIntentId || body.subscriptionId || body.sessionId || ''
+    );
+    const data = await confirmCheckoutSession(actor(req), sessionId, {
+      plan: body.plan,
+      interval: body.interval,
+    });
     return res.status(200).json({ success: true, data });
   } catch (err) {
     return fail(res, err);
@@ -1163,6 +1678,7 @@ module.exports = {
   postSubscribe,
   postPortal,
   postCard,
+  postConfirm,
   getInvoices,
   getInvoiceById,
   stripeWebhook,

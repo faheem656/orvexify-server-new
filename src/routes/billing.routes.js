@@ -25,6 +25,7 @@ const {
   postSubscribe,
   postPortal,
   postCard,
+  postConfirm,
   getInvoices,
   getInvoiceById,
 } = require('../controllers/billing.controller');
@@ -52,6 +53,8 @@ router.post('/waitlist', postWaitlist);
 router.delete('/waitlist', deleteWaitlist);
 router.post('/subscribe', postSubscribe);
 router.post('/portal', postPortal);
+router.post('/card', postCard);
+router.post('/confirm', postConfirm);
 router.post('/cancel', postCancel);
 
 module.exports = router;
