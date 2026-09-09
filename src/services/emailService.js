@@ -16,10 +16,6 @@ const getUserEmailSettings = async (userId) => {
       return null;
     }
 
-    console.log("📧 User email settings check:");
-    console.log("  - smtpHost:", user.smtpHost ? "✅ Set" : "❌ Not set");
-    console.log("  - fromEmail:", user.fromEmail ? "✅ Set" : "❌ Not set");
-    console.log("  - emailPassword:", user.emailPassword ? "✅ Set" : "❌ Not set");
 
     if (!user.smtpHost || !user.fromEmail || !user.emailPassword) {
       console.log("⚠️ No SMTP configured, using default settings...");
@@ -30,7 +26,7 @@ const getUserEmailSettings = async (userId) => {
           smtpHost: process.env.EMAIL_HOST,
           smtpPort: process.env.EMAIL_PORT || "587",
           fromEmail: process.env.EMAIL_FROM || user.email,
-          fromName: user.fromName || user.clinicName || "Clinic",
+          fromName: "Orvexify",
           password: process.env.EMAIL_PASS,
           useTLS: true,
           useSSL: false,
@@ -84,11 +80,6 @@ const generateTrackingToken = () => {
 const createTransporter = (settings) => {
   const port = parseInt(settings.smtpPort) || 587;
   
-  console.log("📧 Creating transporter:");
-  console.log("  - host:", settings.smtpHost);
-  console.log("  - port:", port);
-  console.log("  - user:", settings.fromEmail);
-  console.log("  - secure:", port === 465);
 
   return nodemailer.createTransport({
     host: settings.smtpHost,
@@ -151,8 +142,6 @@ const sendEmailFromClinic = async (userId, to, subject, html, text = "") => {
       html: html,
     });
 
-    console.log(`✅ Email sent from ${settings.fromEmail} to ${to}`);
-    console.log(`✅ Message ID: ${info.messageId}`);
     return { success: true, info, messageId: info.messageId };
   } catch (error) {
     console.error("❌ Send email error:", error.message);

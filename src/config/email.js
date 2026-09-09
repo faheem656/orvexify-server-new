@@ -6,10 +6,6 @@ const sendEmail = async (to, subject, html) => {
     try {
         const port = parseInt(process.env.EMAIL_PORT) || 587;
         
-        console.log('📧 Creating transporter:');
-        console.log(`  - host: ${process.env.EMAIL_HOST}`);
-        console.log(`  - port: ${port}`);
-        console.log(`  - user: ${process.env.EMAIL_USER}`);
 
         const transporter = nodemailer.createTransport({
             host: process.env.EMAIL_HOST,

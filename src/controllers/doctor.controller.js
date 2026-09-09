@@ -7,6 +7,7 @@
 const Doctor = require('../models/Doctor');
 
 const DOCTOR_CAPS = {
+  free: 1,
   starter: 2,
   growth: 6,
   pro: null,
@@ -46,25 +47,32 @@ function sanitizeBody(body) {
 }
 
 function planNameOf(planKey) {
+  if (planKey === 'free') return 'Free';
   if (planKey === 'growth') return 'Growth';
   if (planKey === 'pro') return 'Pro';
   return 'Starter';
 }
 
+function isPaidStatus(status) {
+  return status === 'active' || status === 'canceling' || status === 'past_due';
+}
+
 async function doctorPlanCap(userId) {
-  let planKey = 'starter';
+  let planKey = 'free';
   try {
     const billing = require('./billing.controller');
     if (typeof billing.ensureSubscription === 'function') {
       const sub = await billing.ensureSubscription(userId);
-      planKey = String((sub && sub.planKey) || 'starter').toLowerCase();
+      planKey = isPaidStatus(sub && sub.status)
+        ? String((sub && sub.planKey) || 'starter').toLowerCase()
+        : 'free';
     }
   } catch (err) {
     console.warn('doctorPlanCap', err.message);
-    planKey = 'starter';
+    planKey = 'free';
   }
   if (!Object.prototype.hasOwnProperty.call(DOCTOR_CAPS, planKey)) {
-    planKey = 'starter';
+    planKey = 'free';
   }
   return {
     planKey,
@@ -84,7 +92,7 @@ async function enforceDoctorCap(userId) {
   const { limit, planName, planKey } = await doctorPlanCap(userId);
   if (limit != null && used >= limit) {
     throw httpError(
-      `${planName} includes up to ${limit} doctors. Growth is 6, Pro is unlimited — upgrade on Billing.`,
+      `${planName} includes ${limit} doctor${limit === 1 ? '' : 's'}. Starter is 2, Growth is 6, Pro is unlimited — upgrade on Billing.`,
       'PLAN_LIMIT_DOCTORS',
       403,
       { used, limit, planKey }

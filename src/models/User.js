@@ -38,13 +38,13 @@ const userSchema = new mongoose.Schema(
     },
     plan: {
       type: String,
-      enum: ["free", "starter", "pro"],
+      enum: ["free", "starter","growth", "pro"],
       default: "free",
     },
      planKey: {
       type: String,
-      enum: ['starter', 'growth', 'pro'],
-      default: 'starter',
+      enum: ['free','starter', 'growth', 'pro'],
+      default: 'free',
     },
     billingStatus: {
       type: String,

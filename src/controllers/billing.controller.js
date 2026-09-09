@@ -9,6 +9,22 @@ const Invoice = require('../models/Invoice');
 const PlanWaitlist = require('../models/PlanWaitlist');
 
 const PLANS = {
+  free: {
+    key: 'free',
+    name: 'Free',
+    tagline: '1 doctor, 15 appointments / month',
+    availability: 'in_stock',
+    purchasable: false,
+    waitlist: false,
+    prices: { monthly: 0, yearly: 0 },
+    limits: { clinics: 1, doctors: 1, appointmentsPerMonth: 15 },
+    features: {
+      emailReminders: true,
+      reminderHours: [24, 2, 0.5],
+      whatsapp: 'off',
+      googleCalendar: 'off',
+    },
+  },
   starter: {
     key: 'starter',
     name: 'Starter',
@@ -59,7 +75,7 @@ const PLANS = {
   },
 };
 
-const PLAN_KEYS = Object.keys(PLANS);
+const PLAN_KEYS = ['starter', 'growth', 'pro'];
 const INTERVALS = ['monthly', 'yearly'];
 
 const PRICE_ENV = {
@@ -79,6 +95,15 @@ const PRICE_ENV = {
 
 function getPlan(key) {
   return PLANS[key] || null;
+}
+
+function isPaidStatus(status) {
+  return status === 'active' || status === 'canceling' || status === 'past_due';
+}
+
+function planForSub(sub) {
+  if (!sub || !isPaidStatus(sub.status)) return PLANS.free;
+  return getPlan(sub.planKey) || PLANS.free;
 }
 
 function priceIdFor(planKey, interval) {
@@ -289,9 +314,10 @@ async function syncUser(userId, sub) {
   } catch {
     return;
   }
+  const plan = planForSub(sub);
   await User.updateOne(
     { _id: userId },
-    { $set: { planKey: sub.planKey, billingStatus: sub.status } }
+    { $set: { planKey: plan.key, plan: plan.key, billingStatus: sub.status } }
   );
 }
 
@@ -305,7 +331,7 @@ async function ensureSubscription(userOrId) {
   try {
     sub = await Subscription.create({
       user: userId,
-      planKey: 'starter',
+      planKey: 'free',
       status: 'unpaid',
     });
   } catch (err) {
@@ -322,7 +348,7 @@ async function ensureSubscription(userOrId) {
 async function countDoctors(userId) {
   const Doctor = loadDoctorModel();
   return Doctor.countDocuments({
-    ...ownerQuery(userId),
+    $or: [{ userId }, { user: userId }],
     isDeleted: { $ne: true },
   });
 }
@@ -352,7 +378,7 @@ async function countAppointmentsThisMonth(userId, now) {
 }
 
 async function getUsage(userId, planKey) {
-  const plan = getPlan(planKey) || PLANS.starter;
+  const plan = getPlan(planKey) || PLANS.free;
   let doctors = 0;
   let appointments = 0;
 
@@ -394,9 +420,9 @@ async function waitlistMap(userId) {
 }
 
 function serializeSubscription(sub) {
-  const plan = getPlan(sub.planKey) || PLANS.starter;
+  const plan = planForSub(sub);
   return {
-    planKey: sub.planKey,
+    planKey: plan.key,
     planName: plan.name,
     interval: sub.interval || null,
     status: sub.status,
@@ -449,7 +475,7 @@ async function getOverview(user) {
   }
 
   let [usage, waitlist, invoices] = await Promise.all([
-    getUsage(userId, sub.planKey),
+    getUsage(userId, planForSub(sub).key),
     waitlistMap(userId),
     Invoice.find({ user: userId }).sort({ createdAt: -1 }).limit(12).lean(),
   ]);
@@ -467,14 +493,17 @@ async function getOverview(user) {
   }
 
   const extras = {
-    starter: { onWaitlist: false, isCurrent: sub.planKey === 'starter' },
+    starter: {
+      onWaitlist: false,
+      isCurrent: isPaidStatus(sub.status) && sub.planKey === 'starter',
+    },
     growth: {
       onWaitlist: Boolean(waitlist.growth),
-      isCurrent: sub.planKey === 'growth' && sub.status === 'active',
+      isCurrent: isPaidStatus(sub.status) && sub.planKey === 'growth',
     },
     pro: {
       onWaitlist: Boolean(waitlist.pro),
-      isCurrent: sub.planKey === 'pro' && sub.status === 'active',
+      isCurrent: isPaidStatus(sub.status) && sub.planKey === 'pro',
     },
   };
 
@@ -497,7 +526,7 @@ async function getOverview(user) {
     features: {
       emailReminders: true,
       reminderHours: [24, 2, 0.5],
-      whatsapp: (getPlan(sub.planKey) || PLANS.starter).features.whatsapp,
+      whatsapp: planForSub(sub).features.whatsapp,
     },
     checkoutLive: isCheckoutLive(),
     publishableKey:
@@ -554,7 +583,10 @@ async function applyStripeSubscription(sub, stripeSub, intervalHint, planHint) {
     planHint ||
     metaPlan ||
     sub.planKey ||
-    'starter';
+    'free';
+  if (!isPaidStatus(sub.status)) {
+    sub.planKey = 'free';
+  }
   sub.interval =
     (matched && matched.interval) ||
     intervalHint ||
@@ -1590,39 +1622,39 @@ async function getInvoiceByUser(userOrId, id) {
 async function assertDoctorLimit(userOrId) {
   const userId = userIdOf(userOrId);
   const sub = await ensureSubscription(userId);
-  const plan = getPlan(sub.planKey) || PLANS.starter;
+  const plan = planForSub(sub);
   const limit = plan.limits.doctors;
-  if (limit == null) return { ok: true, used: null, limit: null, planKey: sub.planKey };
+  if (limit == null) return { ok: true, used: null, limit: null, planKey: plan.key };
 
   const used = await countDoctors(userId);
   if (used >= limit) {
     throw httpError(
-      `${plan.name} includes up to ${limit} doctors. Growth is 6, Pro is unlimited — upgrade on Billing.`,
+      `${plan.name} includes ${limit} doctor${limit === 1 ? '' : 's'}. Starter is 2, Growth is 6, Pro is unlimited — upgrade on Billing.`,
       'PLAN_LIMIT_DOCTORS',
       403,
-      { used, limit, planKey: sub.planKey }
+      { used, limit, planKey: plan.key }
     );
   }
-  return { ok: true, used, limit, planKey: sub.planKey };
+  return { ok: true, used, limit, planKey: plan.key };
 }
 
 async function assertAppointmentLimit(userOrId) {
   const userId = userIdOf(userOrId);
   const sub = await ensureSubscription(userId);
-  const plan = getPlan(sub.planKey) || PLANS.starter;
+  const plan = planForSub(sub);
   const limit = plan.limits.appointmentsPerMonth;
-  if (limit == null) return { ok: true, used: null, limit: null, planKey: sub.planKey };
+  if (limit == null) return { ok: true, used: null, limit: null, planKey: plan.key };
 
   const used = await countAppointmentsThisMonth(userId);
   if (used >= limit) {
     throw httpError(
-      `${plan.name} includes ${limit} appointments this month. Growth is 1,500, Pro is unlimited — upgrade on Billing.`,
+      `${plan.name} includes ${limit} appointments this month. Starter is 300, Growth is 1,500, Pro is unlimited — upgrade on Billing.`,
       'PLAN_LIMIT_APPOINTMENTS',
       403,
-      { used, limit, planKey: sub.planKey }
+      { used, limit, planKey: plan.key }
     );
   }
-  return { ok: true, used, limit, planKey: sub.planKey };
+  return { ok: true, used, limit, planKey: plan.key };
 }
 
 async function getBilling(req, res) {

@@ -11,8 +11,8 @@ const subscriptionSchema = new mongoose.Schema(
     },
     planKey: {
       type: String,
-      enum: ['starter', 'growth', 'pro'],
-      default: 'starter',
+      enum: ['free', 'starter', 'growth', 'pro'],
+      default: 'free',
       required: true,
     },
     interval: {

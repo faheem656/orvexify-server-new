@@ -110,11 +110,10 @@ router.post(
         timezone: timezone || 'Asia/Karachi',
         isVerified: false,
         isActive: true,
-        bookingSlug: bookingSlug, // ✅ Added bookingSlug
+        bookingSlug: bookingSlug,
         plan: 'free',
       });
 
-      console.log(`✅ User created: ${user.email} with slug: ${user.bookingSlug}`);
 
       // Create clinic settings
       await ClinicSettings.create({
