@@ -19,6 +19,11 @@ const appointmentSchema = new mongoose.Schema({
     ref: 'Doctor',
     required: true
   },
+  source: {
+  type: String,
+  enum: ['booking', 'manual'],
+  default: 'booking',
+},
   appointmentDate: {
     type: String,
     required: true

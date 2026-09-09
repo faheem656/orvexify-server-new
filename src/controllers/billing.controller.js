@@ -199,8 +199,9 @@ function userIdOf(userOrId) {
 }
 
 function ownerQuery(userId) {
-  const field = process.env.BILLING_OWNER_FIELD || 'user';
-  return { [field]: userId };
+  const field = process.env.BILLING_OWNER_FIELD;
+  if (field) return { [field]: userId };
+  return { $or: [{ user: userId }, { userId }] };
 }
 
 function utcMonthRange(now) {
@@ -329,12 +330,23 @@ async function countDoctors(userId) {
 async function countAppointmentsThisMonth(userId, now) {
   const Appointment = loadAppointmentModel();
   const { start, end } = utcMonthRange(now);
-  const dateField = process.env.BILLING_APPOINTMENT_DATE_FIELD || 'date';
-
-  return Appointment.countDocuments({
+  const dateField = process.env.BILLING_APPOINTMENT_DATE_FIELD || 'appointmentDate';
+  const startStr = start.toISOString().slice(0, 10);
+  const endStr = end.toISOString().slice(0, 10);
+  const base = {
     ...ownerQuery(userId),
     isDeleted: { $ne: true },
     status: { $nin: ['cancelled', 'canceled'] },
+  };
+
+  const asString = await Appointment.countDocuments({
+    ...base,
+    [dateField]: { $gte: startStr, $lt: endStr },
+  });
+  if (asString > 0) return asString;
+
+  return Appointment.countDocuments({
+    ...base,
     [dateField]: { $gte: start, $lt: end },
   });
 }
