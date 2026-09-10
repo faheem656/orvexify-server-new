@@ -1,23 +1,25 @@
-// src/models/User.js — Complete with isActive
+/** DROP-IN: src/models/User.js
+ * Added: clinicLogo + clinicLogoPublicId (Cloudinary URL / public_id)
+ */
 
-const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema(
   {
     clinicName: {
       type: String,
-      required: [true, "Clinic name is required"],
+      required: [true, 'Clinic name is required'],
       trim: true,
     },
     fullName: {
       type: String,
-      required: [true, "Full name is required"],
+      required: [true, 'Full name is required'],
       trim: true,
     },
     email: {
       type: String,
-      required: [true, "Email is required"],
+      required: [true, 'Email is required'],
       unique: true,
       lowercase: true,
       trim: true,
@@ -25,25 +27,24 @@ const userSchema = new mongoose.Schema(
     },
     passwordHash: {
       type: String,
-      required: [true, "Password is required"],
+      required: [true, 'Password is required'],
     },
     isVerified: {
       type: Boolean,
       default: false,
     },
     isActive: {
-      // ✅ ADD THIS FIELD
       type: Boolean,
       default: true,
     },
     plan: {
       type: String,
-      enum: ["free", "starter","growth", "pro"],
-      default: "free",
+      enum: ['free', 'starter', 'growth', 'pro'],
+      default: 'free',
     },
-     planKey: {
+    planKey: {
       type: String,
-      enum: ['free','starter', 'growth', 'pro'],
+      enum: ['free', 'starter', 'growth', 'pro'],
       default: 'free',
     },
     billingStatus: {
@@ -53,15 +54,23 @@ const userSchema = new mongoose.Schema(
     },
     timezone: {
       type: String,
-      default: "Asia/Karachi",
+      default: 'Asia/Karachi',
     },
     clinicPhone: {
       type: String,
-      default: "",
+      default: '',
     },
     clinicAddress: {
       type: String,
-      default: "",
+      default: '',
+    },
+    clinicLogo: {
+      type: String,
+      default: '',
+    },
+    clinicLogoPublicId: {
+      type: String,
+      default: '',
     },
     isTwoFactorEnabled: {
       type: Boolean,
@@ -83,18 +92,17 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["user", "admin", "super_admin"],
-      default: "user",
+      enum: ['user', 'admin', 'super_admin'],
+      default: 'user',
     },
-    // Settings
     dateFormat: {
       type: String,
-      default: "YYYY-MM-DD",
+      default: 'YYYY-MM-DD',
     },
     timeFormat: {
       type: String,
-      enum: ["12h", "24h"],
-      default: "12h",
+      enum: ['12h', '24h'],
+      default: '12h',
     },
     passwordChangedAt: {
       type: Date,
@@ -114,23 +122,23 @@ const userSchema = new mongoose.Schema(
     },
     smtpHost: {
       type: String,
-      default: "",
+      default: '',
     },
     smtpPort: {
       type: String,
-      default: "587",
+      default: '587',
     },
     fromEmail: {
       type: String,
-      default: "",
+      default: '',
     },
     fromName: {
       type: String,
-      default: "",
+      default: '',
     },
     emailPassword: {
       type: String,
-      default: "",
+      default: '',
     },
     useTLS: {
       type: Boolean,
@@ -146,7 +154,7 @@ const userSchema = new mongoose.Schema(
     },
     lastLoginIP: {
       type: String,
-      default: "",
+      default: '',
     },
     createdAt: {
       type: Date,
@@ -155,38 +163,35 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  },
+  }
 );
 
-// Compare password method
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.passwordHash);
 };
 
-// Update last login method
 userSchema.methods.updateLastLogin = async function (ipAddress) {
   this.lastLoginAt = Date.now();
   this.lastLoginIP = ipAddress;
   await this.save();
 };
 
-// Increment token version method
 userSchema.methods.incrementTokenVersion = async function () {
   this.tokenVersion += 1;
   await this.save();
   return this.tokenVersion;
 };
 
-// Method to check if password was changed after token issuance
 userSchema.methods.changedPasswordAfter = function (JWTTimestamp) {
   if (this.passwordChangedAt) {
     const changedTimestamp = parseInt(
       this.passwordChangedAt.getTime() / 1000,
-      10,
+      10
     );
     return JWTTimestamp < changedTimestamp;
   }
   return false;
 };
 
-module.exports = mongoose.model("User", userSchema);
+module.exports =
+  mongoose.models.User || mongoose.model('User', userSchema);

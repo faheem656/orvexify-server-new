@@ -1,26 +1,34 @@
-/**
- * DROP-IN: src/controllers/settings.controller.js
+/** DROP-IN: src/controllers/settings.controller.js
  *
  * Paths (router mounted at /api):
- *   GET  /settings
- *   PUT  /settings            (alias of /settings/general)
- *   PUT  /settings/general
- *   PUT  /settings/booking-slug
- *   PUT  /settings/reminders
- *   PUT  /settings/notifications
- *   PUT  /settings/templates/:type
- *   POST /settings/templates/:type/reset
+ *   GET    /settings
+ *   PUT    /settings
+ *   PUT    /settings/general
+ *   PUT    /settings/booking-slug
+ *   POST   /settings/logo
+ *   DELETE /settings/logo
  */
 
 const moment = require('moment-timezone');
 const User = require('../models/User');
 const ClinicSettings = require('../models/ClinicSettings');
 const defaultTemplates = require('../utils/defaultTemplates');
+const {
+  clinicLogoPublicId,
+  uploadImageBuffer,
+  destroyImage,
+} = require('../utils/cloudinary');
 
 const DATE_FORMATS = ['YYYY-MM-DD', 'DD-MM-YYYY', 'MM-DD-YYYY'];
 const TIME_FORMATS = ['12h', '24h'];
 const TEMPLATE_TYPES = ['reminder', 'confirmation', 'cancellation'];
-const MAX_LOGO_CHARS = 700000;
+const ALLOWED_LOGO_TYPES = {
+  'image/jpeg': true,
+  'image/jpg': true,
+  'image/png': true,
+  'image/webp': true,
+  'image/gif': true,
+};
 const RESERVED_SLUGS = [
   'book',
   'login',
@@ -95,21 +103,20 @@ function logoValue(raw) {
   if (raw === '' || raw === false) return '';
   const value = String(raw).trim();
   if (!value) return '';
-  if (value.length > MAX_LOGO_CHARS) {
+  if (value.indexOf('data:image/') === 0) {
     throw httpError(
-      'Logo is too large. Use a smaller PNG or JPG (under ~500 KB).',
-      'LOGO_TOO_LARGE',
+      'Upload the logo as a file. It is stored on Cloudinary.',
+      'BAD_LOGO',
       400
     );
   }
-  if (
-    value.indexOf('data:image/') === 0 ||
-    value.indexOf('https://') === 0 ||
-    value.indexOf('http://') === 0
-  ) {
+  if (value.indexOf('https://') === 0 || value.indexOf('http://') === 0) {
+    if (value.length > 2000) {
+      throw httpError('Logo URL is too long', 'BAD_LOGO', 400);
+    }
     return value;
   }
-  throw httpError('Logo must be an image file or URL', 'BAD_LOGO', 400);
+  throw httpError('Logo must be a Cloudinary image URL', 'BAD_LOGO', 400);
 }
 
 function withTemplateDefaults(templates) {
@@ -303,6 +310,73 @@ async function updateBookingSlug(req, res) {
   }
 }
 
+async function uploadClinicLogo(req, res) {
+  try {
+    const userId = userIdOf(req);
+    if (!userId) throw httpError('Sign in required', 'UNAUTHORIZED', 401);
+
+    const file = req.file;
+    if (!file || !file.buffer) {
+      throw httpError('Choose a PNG, JPG, or WEBP file', 'BAD_LOGO', 400);
+    }
+    if (!ALLOWED_LOGO_TYPES[file.mimetype]) {
+      throw httpError('Use a PNG, JPG, WEBP, or GIF', 'BAD_LOGO', 400);
+    }
+
+    const user = await User.findById(userId);
+    if (!user) throw httpError('Account not found', 'NOT_FOUND', 404);
+
+    const publicId = clinicLogoPublicId(userId);
+    const result = await uploadImageBuffer(file.buffer, publicId);
+    const url = result.secure_url || result.url;
+    if (!url) throw httpError('Cloudinary did not return a URL', 'UPLOAD_FAILED', 500);
+
+    user.clinicLogo = url;
+    if (user.schema.path('clinicLogoPublicId')) {
+      user.clinicLogoPublicId = result.public_id || publicId;
+    }
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: 'Clinic logo saved',
+      data: {
+        clinicLogo: url,
+        publicId: result.public_id || publicId,
+      },
+    });
+  } catch (error) {
+    console.error('Upload clinic logo error:', error);
+    return fail(res, error);
+  }
+}
+
+async function removeClinicLogo(req, res) {
+  try {
+    const userId = userIdOf(req);
+    if (!userId) throw httpError('Sign in required', 'UNAUTHORIZED', 401);
+
+    const user = await User.findById(userId);
+    if (!user) throw httpError('Account not found', 'NOT_FOUND', 404);
+
+    await destroyImage(clinicLogoPublicId(userId));
+    user.clinicLogo = '';
+    if (user.schema.path('clinicLogoPublicId')) {
+      user.clinicLogoPublicId = '';
+    }
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: 'Clinic logo removed',
+      data: { clinicLogo: '' },
+    });
+  } catch (error) {
+    console.error('Remove clinic logo error:', error);
+    return fail(res, error);
+  }
+}
+
 async function updateReminderSettings(req, res) {
   try {
     const userId = userIdOf(req);
@@ -429,6 +503,8 @@ module.exports = {
   getSettings,
   updateGeneralSettings,
   updateBookingSlug,
+  uploadClinicLogo,
+  removeClinicLogo,
   updateReminderSettings,
   updateNotificationSettings,
   updateEmailTemplate,
