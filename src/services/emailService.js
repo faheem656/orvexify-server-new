@@ -1,40 +1,41 @@
-// src/services/emailService.js — Complete Fixed Version
+/** DROP-IN: src/services/emailService.js
+ * Last arg of sendReminderEmail: { showActions: false } = no Confirm/Cancel
+ * (30-min coming-soon for confirmed visits).
+ */
 
-const nodemailer = require("nodemailer");
-const crypto = require("crypto");
-const User = require("../models/User");
-const ReminderLog = require("../models/ReminderLog");
-const { decrypt } = require("../utils/encryption");
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
+const User = require('../models/User');
+const ReminderLog = require('../models/ReminderLog');
+const { decrypt } = require('../utils/encryption');
 
-// ============ GET USER EMAIL SETTINGS ============
 const getUserEmailSettings = async (userId) => {
   try {
     const user = await User.findById(userId);
 
     if (!user) {
-      console.log("❌ User not found:", userId);
+      console.log('❌ User not found:', userId);
       return null;
     }
 
-
     if (!user.smtpHost || !user.fromEmail || !user.emailPassword) {
-      console.log("⚠️ No SMTP configured, using default settings...");
-      
+      console.log('⚠️ No SMTP configured, using default settings...');
+
       if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-        console.log("✅ Using default email settings from .env");
+        console.log('✅ Using default email settings from .env');
         return {
           smtpHost: process.env.EMAIL_HOST,
-          smtpPort: process.env.EMAIL_PORT || "587",
+          smtpPort: process.env.EMAIL_PORT || '587',
           fromEmail: process.env.EMAIL_FROM || user.email,
-          fromName: "Orvexify",
+          fromName: 'Orvexify',
           password: process.env.EMAIL_PASS,
           useTLS: true,
           useSSL: false,
-          timezone: user.timezone || "Asia/Karachi",
+          timezone: user.timezone || 'Asia/Karachi',
         };
       }
-      
-      console.log("❌ Missing email configuration for clinic");
+
+      console.log('❌ Missing email configuration for clinic');
       return null;
     }
 
@@ -42,48 +43,43 @@ const getUserEmailSettings = async (userId) => {
     try {
       decryptedPassword = decrypt(user.emailPassword);
     } catch (decryptError) {
-      console.error("❌ Decryption failed:", decryptError.message);
+      console.error('❌ Decryption failed:', decryptError.message);
       return null;
     }
 
     if (!decryptedPassword) {
-      console.log("❌ Decrypted password is empty");
+      console.log('❌ Decrypted password is empty');
       return null;
     }
 
-    console.log("✅ Email settings loaded successfully");
-    console.log("  - fromEmail:", user.fromEmail);
-    console.log("  - smtpHost:", user.smtpHost);
+    console.log('✅ Email settings loaded successfully');
+    console.log('  - fromEmail:', user.fromEmail);
+    console.log('  - smtpHost:', user.smtpHost);
 
     return {
       smtpHost: user.smtpHost,
-      smtpPort: user.smtpPort || "587",
+      smtpPort: user.smtpPort || '587',
       fromEmail: user.fromEmail,
-      fromName: user.fromName || user.clinicName || "Clinic",
+      fromName: user.fromName || user.clinicName || 'Clinic',
       password: decryptedPassword.trim(),
       useTLS: user.useTLS !== undefined ? user.useTLS : true,
       useSSL: user.useSSL || false,
-      timezone: user.timezone || "Asia/Karachi",
+      timezone: user.timezone || 'Asia/Karachi',
     };
   } catch (error) {
-    console.error("❌ getUserEmailSettings error:", error);
+    console.error('❌ getUserEmailSettings error:', error);
     return null;
   }
 };
 
-// ============ GENERATE TRACKING TOKEN ============
-const generateTrackingToken = () => {
-  return crypto.randomBytes(32).toString("hex");
-};
+const generateTrackingToken = () => crypto.randomBytes(32).toString('hex');
 
-// ============ CREATE TRANSPORTER ============
 const createTransporter = (settings) => {
-  const port = parseInt(settings.smtpPort) || 587;
-  
+  const port = parseInt(settings.smtpPort, 10) || 587;
 
   return nodemailer.createTransport({
     host: settings.smtpHost,
-    port: port,
+    port,
     secure: port === 465,
     auth: {
       user: settings.fromEmail,
@@ -98,18 +94,17 @@ const createTransporter = (settings) => {
   });
 };
 
-// ============ SEND EMAIL ============
-const sendEmailFromClinic = async (userId, to, subject, html, text = "") => {
+const sendEmailFromClinic = async (userId, to, subject, html, text = '') => {
   try {
     if (!to) {
-      console.error("❌ No recipient email provided");
-      return { success: false, error: "No recipient email" };
+      console.error('❌ No recipient email provided');
+      return { success: false, error: 'No recipient email' };
     }
 
     to = String(to).trim();
     if (!to) {
-      console.error("❌ Invalid recipient email");
-      return { success: false, error: "Invalid recipient email" };
+      console.error('❌ Invalid recipient email');
+      return { success: false, error: 'Invalid recipient email' };
     }
 
     console.log(`📧 Preparing to send email to: ${to}`);
@@ -117,55 +112,53 @@ const sendEmailFromClinic = async (userId, to, subject, html, text = "") => {
     const settings = await getUserEmailSettings(userId);
 
     if (!settings) {
-      console.log("❌ No email configured for clinic:", userId);
-      return { success: false, error: "Email not configured" };
+      console.log('❌ No email configured for clinic:', userId);
+      return { success: false, error: 'Email not configured' };
     }
 
     const transporter = createTransporter(settings);
 
     try {
       await transporter.verify();
-      console.log("✅ SMTP connection verified");
+      console.log('✅ SMTP connection verified');
     } catch (verifyError) {
-      console.error("❌ SMTP verification failed:", verifyError.message);
+      console.error('❌ SMTP verification failed:', verifyError.message);
       return {
         success: false,
-        error: "SMTP connection failed: " + verifyError.message,
+        error: 'SMTP connection failed: ' + verifyError.message,
       };
     }
 
     const info = await transporter.sendMail({
       from: `"${settings.fromName || 'Orvexify'}" <${settings.fromEmail}>`,
-      to: to,
-      subject: subject,
-      text: text || html.replace(/<[^>]*>/g, ""),
-      html: html,
+      to,
+      subject,
+      text: text || html.replace(/<[^>]*>/g, ''),
+      html,
     });
 
     return { success: true, info, messageId: info.messageId };
   } catch (error) {
-    console.error("❌ Send email error:", error.message);
+    console.error('❌ Send email error:', error.message);
     return { success: false, error: error.message };
   }
 };
 
-// ============ FORMAT DATE ============
 const formatAppointmentDate = (dateStr, timezone) => {
   try {
-    const date = new Date(dateStr + "T00:00:00");
-    return date.toLocaleDateString("en-US", {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-      timeZone: timezone || "Asia/Karachi",
+    const date = new Date(String(dateStr) + 'T00:00:00');
+    return date.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: timezone || 'Asia/Karachi',
     });
   } catch (error) {
     return dateStr;
   }
 };
 
-// ============ GENERATE TRACKING HTML ============
 const generateTrackingHTML = (pixelUrl, trackingToken) => {
   return `
     <!-- CSS BACKGROUND TRACKING -->
@@ -184,7 +177,6 @@ const generateTrackingHTML = (pixelUrl, trackingToken) => {
   `;
 };
 
-// ============ SEND REMINDER EMAIL ============
 const sendReminderEmail = async (
   userId,
   to,
@@ -197,60 +189,83 @@ const sendReminderEmail = async (
   cancelLink,
   logId,
   trackingPixel,
-  reminderLabel = "Appointment Reminder",
-  urgencyLevel = "low",
+  reminderLabel = 'Appointment Reminder',
+  urgencyLevel = 'low',
+  options = {}
 ) => {
   console.log(`📧 Sending reminder email to: ${to}`);
   console.log(`📋 Reminder Type: ${reminderLabel}, Urgency: ${urgencyLevel}`);
 
   if (!to) {
-    console.error("❌ sendReminderEmail: No recipient");
-    return { success: false, error: "No recipient email" };
+    console.error('❌ sendReminderEmail: No recipient');
+    return { success: false, error: 'No recipient email' };
   }
   to = String(to).trim();
-  if (!to) return { success: false, error: "Invalid email" };
+  if (!to) return { success: false, error: 'Invalid email' };
+
+  let showActions = true;
+  if (typeof options === 'boolean') showActions = options;
+  else if (options && options.showActions === false) showActions = false;
 
   const trackingToken = generateTrackingToken();
 
   if (logId) {
     try {
       await ReminderLog.findByIdAndUpdate(logId, {
-        trackingToken: trackingToken,
+        trackingToken,
       });
       console.log(`✅ Tracking token saved to log: ${trackingToken}`);
     } catch (error) {
-      console.error("❌ Failed to update tracking token:", error);
+      console.error('❌ Failed to update tracking token:', error);
     }
   }
 
   const settings = await getUserEmailSettings(userId);
-  const timezone = settings?.timezone || "Asia/Karachi";
-  const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
-  const pixelUrl = `${backendUrl}/api/tracking/pixel/${trackingToken}`;
+  const timezone = settings?.timezone || 'Asia/Karachi';
+  const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
+  const pixelUrl =
+    trackingPixel || `${backendUrl}/api/tracking/pixel/${trackingToken}`;
 
   console.log(`📊 Tracking Pixel URL: ${pixelUrl}`);
 
   const formattedDate = formatAppointmentDate(appointmentDate, timezone);
-  const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-  const confirmTrackingUrl = `${backendUrl}/api/tracking/click?tracking=${trackingToken}&action=confirm&redirect=${encodeURIComponent(confirmLink)}`;
-  const cancelTrackingUrl = `${backendUrl}/api/tracking/click?tracking=${trackingToken}&action=cancel&redirect=${encodeURIComponent(cancelLink)}`;
+  const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const confirmTrackingUrl = `${backendUrl}/api/tracking/click?tracking=${trackingToken}&action=confirm&redirect=${encodeURIComponent(
+    confirmLink || ''
+  )}`;
+  const cancelTrackingUrl = `${backendUrl}/api/tracking/click?tracking=${trackingToken}&action=cancel&redirect=${encodeURIComponent(
+    cancelLink || ''
+  )}`;
 
   const trackingHTML = generateTrackingHTML(pixelUrl, trackingToken);
 
   let urgencyStyles = {
-    headerBg: 'linear-gradient(135deg, #3b82f6, #06b6d4)',
-    badgeBg: '#3b82f6',
+    headerBg: 'linear-gradient(135deg, #803AFF, #4E49FF, #06A6F8)',
+    badgeBg: '#4E49FF',
     badgeColor: 'white',
-    borderColor: '#3b82f6',
+    borderColor: '#4E49FF',
     urgencyText: '',
     urgencyEmoji: '📅',
     urgencyLabel: 'Appointment Reminder',
     showWarning: false,
     warningText: '',
-    buttonBg: '#22c55e'
+    buttonBg: '#22c55e',
   };
 
-  if (urgencyLevel === 'high') {
+  if (!showActions) {
+    urgencyStyles = {
+      headerBg: 'linear-gradient(135deg, #803AFF, #4E49FF, #06A6F8)',
+      badgeBg: '#4E49FF',
+      badgeColor: 'white',
+      borderColor: '#4E49FF',
+      urgencyText: 'See you soon',
+      urgencyEmoji: '📅',
+      urgencyLabel: 'Your appointment is in 30 minutes',
+      showWarning: false,
+      warningText: '',
+      buttonBg: '#4E49FF',
+    };
+  } else if (urgencyLevel === 'high') {
     urgencyStyles = {
       headerBg: 'linear-gradient(135deg, #dc2626, #b91c1c)',
       badgeBg: '#dc2626',
@@ -260,23 +275,55 @@ const sendReminderEmail = async (
       urgencyEmoji: '⚠️',
       urgencyLabel: '30-Minute Final Reminder',
       showWarning: true,
-      warningText: '⚠️ Your appointment is in less than 30 minutes. Please confirm or cancel immediately.',
-      buttonBg: '#dc2626'
+      warningText:
+        '⚠️ Your appointment is in less than 30 minutes. Please confirm or cancel immediately.',
+      buttonBg: '#dc2626',
     };
-  } else if (urgencyLevel === 'medium') {
-    urgencyStyles = {
-      headerBg: 'linear-gradient(135deg, #f59e0b, #d97706)',
-      badgeBg: '#f59e0b',
-      badgeColor: 'white',
-      borderColor: '#f59e0b',
-      urgencyText: '🔔 2-Hour Reminder',
-      urgencyEmoji: '🔔',
-      urgencyLabel: '2-Hour Reminder',
-      showWarning: false,
-      warningText: '',
-      buttonBg: '#22c55e'
-    };
+  } else if (urgencyLevel === 'medium' || urgencyLevel === 'coming') {
+    if (urgencyLevel === 'medium') {
+      urgencyStyles = {
+        headerBg: 'linear-gradient(135deg, #f59e0b, #d97706)',
+        badgeBg: '#f59e0b',
+        badgeColor: 'white',
+        borderColor: '#f59e0b',
+        urgencyText: '🔔 2-Hour Reminder',
+        urgencyEmoji: '🔔',
+        urgencyLabel: '2-Hour Reminder',
+        showWarning: false,
+        warningText: '',
+        buttonBg: '#22c55e',
+      };
+    }
   }
+
+  const actionBlock = showActions
+    ? `
+          <div class="button-group">
+            <a href="${confirmTrackingUrl}" class="btn btn-confirm">✅ Confirm Appointment</a>
+            <a href="${cancelTrackingUrl}" class="btn btn-cancel">❌ Cancel Appointment</a>
+          </div>
+          ${urgencyLevel === 'high'
+      ? `
+          <div style="background: #fef2f2; border-radius: 8px; padding: 12px 16px; margin: 12px 0;">
+            <p style="margin: 0; font-size: 13px; color: #991b1b; text-align: center;">⚠️ Please respond immediately. Your appointment is in less than 30 minutes.</p>
+          </div>`
+      : ''
+    }
+          ${urgencyLevel === 'medium'
+      ? `
+          <div style="background: #fffbeb; border-radius: 8px; padding: 10px 14px; margin: 12px 0;">
+            <p style="margin: 0; font-size: 13px; color: #92400e; text-align: center;">🔔 Please confirm or cancel within the next 2 hours.</p>
+          </div>`
+      : ''
+    }
+          <p style="font-size: 13px; color: #64748b; text-align: center; margin: 12px 0 0;">Please confirm or cancel at least 2 hours before your appointment.</p>`
+    : `
+          <p style="font-size: 15px; color: #334155; margin: 0 0 8px;">You booked this appointment. Please arrive on time — we look forward to seeing you.</p>
+          <p style="font-size: 13px; color: #64748b; text-align: center; margin: 16px 0 0;">This is a reminder only. No action is needed.</p>`;
+
+  const greeting = showActions
+    ? `Dear <strong>${patientName}</strong>,`
+    : `Dear <strong>${patientName}</strong>, this is a reminder for the appointment you booked.`;
 
   const html = `
     <!DOCTYPE html>
@@ -307,7 +354,7 @@ const sendReminderEmail = async (
         .btn-cancel { background: #ef4444; color: white; }
         .btn-cancel:hover { background: #dc2626; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(239,68,68,0.3); }
         .footer { text-align: center; padding: 20px 24px; color: #94a3b8; font-size: 12px; background: #f8fafc; border-top: 1px solid #e2e8f0; }
-        .footer a { color: #3b82f6; text-decoration: none; }
+        .footer a { color: #4E49FF; text-decoration: none; }
         .footer a:hover { text-decoration: underline; }
         .timezone-note { font-size: 12px; color: #94a3b8; text-align: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f1f5f9; }
         @media (max-width: 480px) {
@@ -333,30 +380,18 @@ const sendReminderEmail = async (
           <div class="warning-box">
             <p>${urgencyStyles.warningText}</p>
           </div>
-          <p class="greeting">Dear <strong>${patientName}</strong>,</p>
+          <p class="greeting">${greeting}</p>
           <div class="details">
             <p><strong>📅 Date:</strong> ${formattedDate}</p>
             <p><strong>⏰ Time:</strong> ${appointmentTime}</p>
             <p><strong>👨‍⚕️ Doctor:</strong> Dr. ${doctorName}</p>
             <p><strong>📍 Clinic:</strong> ${clinicName}</p>
           </div>
-          <div class="button-group">
-            <a href="${confirmTrackingUrl}" class="btn btn-confirm">✅ Confirm Appointment</a>
-            <a href="${cancelTrackingUrl}" class="btn btn-cancel">❌ Cancel Appointment</a>
-          </div>
-          ${urgencyLevel === 'high' ? `
-          <div style="background: #fef2f2; border-radius: 8px; padding: 12px 16px; margin: 12px 0;">
-            <p style="margin: 0; font-size: 13px; color: #991b1b; text-align: center;">⚠️ Please respond immediately. Your appointment is in less than 30 minutes.</p>
-          </div>` : ''}
-          ${urgencyLevel === 'medium' ? `
-          <div style="background: #fffbeb; border-radius: 8px; padding: 10px 14px; margin: 12px 0;">
-            <p style="margin: 0; font-size: 13px; color: #92400e; text-align: center;">🔔 Please confirm or cancel within the next 2 hours.</p>
-          </div>` : ''}
-          <p style="font-size: 13px; color: #64748b; text-align: center; margin: 12px 0 0;">Please confirm or cancel at least 2 hours before your appointment.</p>
+          ${actionBlock}
           <div class="timezone-note">⏰ All times are in ${timezone}</div>
         </div>
         <div class="footer">
-          <p style="margin: 0;"><a href="${baseUrl}/privacy">Privacy Policy</a> &nbsp;|&nbsp; <a href="${baseUrl}/unsubscribe/${trackingToken}">Unsubscribe</a></p>
+          <p style="margin: 0;"><a href="${baseUrl}/privacy">Privacy Policy</a>  |  <a href="${baseUrl}/unsubscribe/${trackingToken}">Unsubscribe</a></p>
           <p style="margin: 8px 0 0;">&copy; ${new Date().getFullYear()} Orvexify. All rights reserved.</p>
         </div>
       </div>
@@ -365,10 +400,14 @@ const sendReminderEmail = async (
     </html>
   `;
 
-  console.log(`📤 Sending email with CSS Background tracking`);
+  console.log(
+    `📤 Sending email (${showActions ? 'with confirm/cancel' : 'coming-soon, no actions'})`
+  );
 
   let subject = `Appointment Reminder - ${clinicName}`;
-  if (urgencyLevel === 'high') {
+  if (!showActions) {
+    subject = `See you in 30 minutes — ${clinicName}`;
+  } else if (urgencyLevel === 'high') {
     subject = `⚠️ URGENT: Your appointment is in 30 minutes - ${clinicName}`;
   } else if (urgencyLevel === 'medium') {
     subject = `🔔 2-Hour Reminder: Your appointment at ${clinicName}`;
@@ -376,35 +415,35 @@ const sendReminderEmail = async (
 
   const result = await sendEmailFromClinic(userId, to, subject, html);
 
-  // ✅ FIXED: Update log with ALL status fields
   if (logId) {
     try {
       await ReminderLog.findByIdAndUpdate(logId, {
         'status.current': result.success ? 'sent' : 'failed',
         'status.isPending': false,
-        'status.isSent': result.success ? true : false,
-        'status.isDelivered': result.success ? true : false,
-        'status.isFailed': result.success ? false : true,
+        'status.isSent': !!result.success,
+        'status.isDelivered': !!result.success,
+        'status.isFailed': !result.success,
         sentAt: new Date(),
         errorMessage: result.success ? null : result.error,
-        reminderLabel: reminderLabel,
-        urgencyLevel: urgencyLevel,
-        trackingToken: trackingToken,
+        reminderLabel,
+        urgencyLevel,
+        trackingToken,
       });
-      console.log(`✅ Log updated: ${logId}, status: ${result.success ? "sent" : "failed"}`);
+      console.log(
+        `✅ Log updated: ${logId}, status: ${result.success ? 'sent' : 'failed'}`
+      );
     } catch (error) {
-      console.error("❌ Failed to update log status:", error);
+      console.error('❌ Failed to update log status:', error);
     }
   }
 
   return result;
 };
 
-// ============ OTHER EMAIL FUNCTIONS ============
 const sendVerificationEmail = async (userId, to, name, code) => {
   console.log(`📧 Sending verification email to: ${to}`);
   const settings = await getUserEmailSettings(userId);
-  const clinicName = settings?.fromName || "Orvexify";
+  const clinicName = settings?.fromName || 'Orvexify';
 
   const html = `
     <!DOCTYPE html>
@@ -412,11 +451,11 @@ const sendVerificationEmail = async (userId, to, name, code) => {
     <head><meta charset="UTF-8"><title>Verify Your Email</title>
     <style>body{font-family:Arial,sans-serif;line-height:1.6;color:#333;}
     .container{max-width:500px;margin:0 auto;background:#fff;}
-    .header{background:linear-gradient(135deg,#3b82f6,#06b6d4);padding:30px;text-align:center;border-radius:10px 10px 0 0;}
+    .header{background:linear-gradient(135deg,#803AFF,#4E49FF,#06A6F8);padding:30px;text-align:center;border-radius:10px 10px 0 0;}
     .header h1{color:#fff;margin:0;font-size:24px;}
     .content{padding:30px;background:#f8fafc;border-radius:0 0 10px 10px;}
     .code-box{background:#fff;padding:20px;text-align:center;border-radius:12px;margin:20px 0;border:1px solid #e2e8f0;}
-    .code{font-size:36px;font-weight:bold;letter-spacing:8px;color:#3b82f6;font-family:monospace;}
+    .code{font-size:36px;font-weight:bold;letter-spacing:8px;color:#4E49FF;font-family:monospace;}
     .footer{text-align:center;padding:20px;color:#94a3b8;font-size:12px;}</style>
     </head>
     <body>
@@ -434,14 +473,28 @@ const sendVerificationEmail = async (userId, to, name, code) => {
     </html>
   `;
 
-  return await sendEmailFromClinic(userId, to, `Verify Your Email - ${clinicName}`, html);
+  return await sendEmailFromClinic(
+    userId,
+    to,
+    `Verify Your Email - ${clinicName}`,
+    html
+  );
 };
 
-const sendBookingConfirmation = async (userId, to, name, date, time, clinicName, doctorName, timezone) => {
+const sendBookingConfirmation = async (
+  userId,
+  to,
+  name,
+  date,
+  time,
+  clinicName,
+  doctorName,
+  timezone
+) => {
   console.log(`📧 Sending booking confirmation to: ${to}`);
-  if (!to) return { success: false, error: "No recipient email" };
+  if (!to) return { success: false, error: 'No recipient email' };
   to = String(to).trim();
-  if (!to) return { success: false, error: "Invalid email" };
+  if (!to) return { success: false, error: 'Invalid email' };
 
   const formattedDate = formatAppointmentDate(date, timezone);
   const html = `
@@ -458,14 +511,14 @@ const sendBookingConfirmation = async (userId, to, name, date, time, clinicName,
     </head>
     <body>
       <div class="container">
-        <div class="header"><h1>${clinicName || "Clinic"}</h1></div>
+        <div class="header"><h1>${clinicName || 'Clinic'}</h1></div>
         <div class="content">
-          <h2>Hello ${name || "Patient"},</h2>
+          <h2>Hello ${name || 'Patient'},</h2>
           <p>Your appointment has been successfully booked.</p>
           <div class="details">
             <p><strong>📅 Date:</strong> ${formattedDate}</p>
-            <p><strong>⏰ Time:</strong> ${time || "N/A"}</p>
-            ${doctorName ? `<p><strong>👨‍⚕️ Doctor:</strong> Dr. ${doctorName}</p>` : ""}
+            <p><strong>⏰ Time:</strong> ${time || 'N/A'}</p>
+            ${doctorName ? `<p><strong>👨‍⚕️ Doctor:</strong> Dr. ${doctorName}</p>` : ''}
           </div>
           <p>You will receive a reminder 24 hours before your appointment.</p>
           <p style="margin-top:20px;font-size:14px;">Thank you for choosing us!</p>
@@ -476,14 +529,27 @@ const sendBookingConfirmation = async (userId, to, name, date, time, clinicName,
     </html>
   `;
 
-  return await sendEmailFromClinic(userId, to, `Appointment Confirmed - ${clinicName || "Clinic"}`, html);
+  return await sendEmailFromClinic(
+    userId,
+    to,
+    `Appointment Confirmed - ${clinicName || 'Clinic'}`,
+    html
+  );
 };
 
-const sendCancellationEmail = async (userId, to, patientName, clinicName, appointmentDate, appointmentTime, timezone) => {
+const sendCancellationEmail = async (
+  userId,
+  to,
+  patientName,
+  clinicName,
+  appointmentDate,
+  appointmentTime,
+  timezone
+) => {
   console.log(`📧 Sending cancellation email to: ${to}`);
-  if (!to) return { success: false, error: "No recipient email" };
+  if (!to) return { success: false, error: 'No recipient email' };
   to = String(to).trim();
-  if (!to) return { success: false, error: "Invalid email" };
+  if (!to) return { success: false, error: 'Invalid email' };
 
   const formattedDate = formatAppointmentDate(appointmentDate, timezone);
   const html = `
@@ -517,14 +583,28 @@ const sendCancellationEmail = async (userId, to, patientName, clinicName, appoin
     </html>
   `;
 
-  return await sendEmailFromClinic(userId, to, `Appointment Cancelled - ${clinicName}`, html);
+  return await sendEmailFromClinic(
+    userId,
+    to,
+    `Appointment Cancelled - ${clinicName}`,
+    html
+  );
 };
 
-const sendConfirmedEmail = async (userId, to, patientName, clinicName, appointmentDate, appointmentTime, doctorName, timezone) => {
+const sendConfirmedEmail = async (
+  userId,
+  to,
+  patientName,
+  clinicName,
+  appointmentDate,
+  appointmentTime,
+  doctorName,
+  timezone
+) => {
   console.log(`📧 Sending confirmed email to: ${to}`);
-  if (!to) return { success: false, error: "No recipient email" };
+  if (!to) return { success: false, error: 'No recipient email' };
   to = String(to).trim();
-  if (!to) return { success: false, error: "Invalid email" };
+  if (!to) return { success: false, error: 'Invalid email' };
 
   const formattedDate = formatAppointmentDate(appointmentDate, timezone);
   const html = `
@@ -558,17 +638,32 @@ const sendConfirmedEmail = async (userId, to, patientName, clinicName, appointme
     </html>
   `;
 
-  return await sendEmailFromClinic(userId, to, `Appointment Confirmed - ${clinicName}`, html);
+  return await sendEmailFromClinic(
+    userId,
+    to,
+    `Appointment Confirmed - ${clinicName}`,
+    html
+  );
 };
 
-const sendNoResponseFollowUp = async (userId, to, patientName, clinicName, appointmentDate, appointmentTime, doctorName, confirmLink, cancelLink) => {
+const sendNoResponseFollowUp = async (
+  userId,
+  to,
+  patientName,
+  clinicName,
+  appointmentDate,
+  appointmentTime,
+  doctorName,
+  confirmLink,
+  cancelLink
+) => {
   console.log(`📧 Sending no-response follow-up to: ${to}`);
-  if (!to) return { success: false, error: "No recipient email" };
+  if (!to) return { success: false, error: 'No recipient email' };
   to = String(to).trim();
-  if (!to) return { success: false, error: "Invalid email" };
+  if (!to) return { success: false, error: 'Invalid email' };
 
   const settings = await getUserEmailSettings(userId);
-  const timezone = settings?.timezone || "Asia/Karachi";
+  const timezone = settings?.timezone || 'Asia/Karachi';
   const formattedDate = formatAppointmentDate(appointmentDate, timezone);
 
   const html = `
@@ -611,10 +706,14 @@ const sendNoResponseFollowUp = async (userId, to, patientName, clinicName, appoi
     </html>
   `;
 
-  return await sendEmailFromClinic(userId, to, `⚠️ Appointment Reminder - Please Confirm - ${clinicName}`, html);
+  return await sendEmailFromClinic(
+    userId,
+    to,
+    `⚠️ Appointment Reminder - Please Confirm - ${clinicName}`,
+    html
+  );
 };
 
-// ============ EXPORT ALL ============
 module.exports = {
   sendEmailFromClinic,
   sendVerificationEmail,
