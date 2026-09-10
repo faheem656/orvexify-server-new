@@ -356,7 +356,7 @@ async function getAvailableSlots(req, res) {
 async function createAppointment(req, res) {
   try {
     const userId = userIdOf(req);
-    await assertAppointmentLimit(userId);
+    const limitInfo = await assertAppointmentLimit(userId);
 
     const body = req.body || {};
     const doctorId = body.doctorId || body.doctor;
@@ -424,6 +424,18 @@ async function createAppointment(req, res) {
       await scheduleAppointmentReminders(appointment);
     } catch (err) {
       console.error('scheduleAppointmentReminders', err.message);
+    }
+
+    try {
+      const { maybeNotifyPlanLimit } = require('./booking.controller');
+      void maybeNotifyPlanLimit({
+        clinic: req.user,
+        used: limitInfo && limitInfo.used != null ? Number(limitInfo.used) + 1 : null,
+        limit: limitInfo && limitInfo.limit,
+        planKey: limitInfo && limitInfo.planKey,
+      });
+    } catch (err) {
+      console.error('maybeNotifyPlanLimit', err && err.message);
     }
 
     return res.status(201).json({

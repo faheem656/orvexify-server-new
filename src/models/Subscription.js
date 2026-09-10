@@ -62,6 +62,14 @@ const subscriptionSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    limitWarnKey: {
+      type: String,
+      default: null,
+    },
+    limitWarnAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );
