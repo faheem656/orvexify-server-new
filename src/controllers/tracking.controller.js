@@ -76,10 +76,10 @@ function ensureStatus(log) {
   return log.status;
 }
 
-function markOpened(log, { overwriteCurrent }) {
+function markOpened(log, { overwriteCurrent, bumpCount = true } = {}) {
   log.opened = true;
   log.openedAt = log.openedAt || new Date();
-  log.openedCount = (log.openedCount || 0) + 1;
+  if (bumpCount) log.openedCount = (log.openedCount || 0) + 1;
   const status = ensureStatus(log);
   status.isOpened = true;
   status.isPending = false;
@@ -92,6 +92,10 @@ function markOpened(log, { overwriteCurrent }) {
 }
 
 function markClicked(log, action) {
+  // Clicking Confirm/Cancel means they opened the mail — even if the
+  // pixel never fired (Gmail image proxy / blocked). Do not flip
+  // status.current away from confirm/cancel.
+  markOpened(log, { overwriteCurrent: false, bumpCount: !log.opened });
   log.clicked = true;
   log.clickedAt = log.clickedAt || new Date();
   log.clickedCount = (log.clickedCount || 0) + 1;
@@ -173,6 +177,7 @@ async function trackClick(req, res) {
     const existing = logAction(log) || (lockedApt ? (aptStatus(appointment) === 'confirmed' ? 'confirm' : 'cancel') : null);
 
     if (lockedLog || lockedApt) {
+      markOpened(log, { overwriteCurrent: false, bumpCount: !log.opened });
       log.clickedCount = (log.clickedCount || 0) + 1;
       log.clickedAt = log.clickedAt || new Date();
       await log.save();
