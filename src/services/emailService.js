@@ -74,6 +74,12 @@ const getUserEmailSettings = async (userId) => {
 
 const generateTrackingToken = () => crypto.randomBytes(32).toString('hex');
 
+function tokenFromPixelUrl(url) {
+  if (!url) return null;
+  const match = String(url).match(/\/pixel\/([a-fA-F0-9]{32,128})/);
+  return match ? match[1] : null;
+}
+
 const createTransporter = (settings) => {
   const port = parseInt(settings.smtpPort, 10) || 587;
 
@@ -207,13 +213,29 @@ const sendReminderEmail = async (
   if (typeof options === 'boolean') showActions = options;
   else if (options && options.showActions === false) showActions = false;
 
-  const trackingToken = generateTrackingToken();
+  // One token only. Agenda already saves trackingToken on the log and
+  // puts that same token in trackingPixel. Generating a second token
+  // here used to overwrite the DB while the <img> still pointed at the
+  // first token → "No log found for token" on every pixel hit.
+  let trackingToken = null;
+  if (logId) {
+    try {
+      const existing = await ReminderLog.findById(logId)
+        .select('trackingToken')
+        .lean();
+      if (existing && existing.trackingToken) {
+        trackingToken = existing.trackingToken;
+      }
+    } catch (error) {
+      console.error('❌ Failed to load tracking token:', error);
+    }
+  }
+  if (!trackingToken) trackingToken = tokenFromPixelUrl(trackingPixel);
+  if (!trackingToken) trackingToken = generateTrackingToken();
 
   if (logId) {
     try {
-      await ReminderLog.findByIdAndUpdate(logId, {
-        trackingToken,
-      });
+      await ReminderLog.findByIdAndUpdate(logId, { trackingToken });
       console.log(`✅ Tracking token saved to log: ${trackingToken}`);
     } catch (error) {
       console.error('❌ Failed to update tracking token:', error);
@@ -223,8 +245,7 @@ const sendReminderEmail = async (
   const settings = await getUserEmailSettings(userId);
   const timezone = settings?.timezone || 'Asia/Karachi';
   const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
-  const pixelUrl =
-    trackingPixel || `${backendUrl}/api/tracking/pixel/${trackingToken}`;
+  const pixelUrl = `${backendUrl}/api/tracking/pixel/${trackingToken}`;
 
   console.log(`📊 Tracking Pixel URL: ${pixelUrl}`);
 
@@ -302,20 +323,22 @@ const sendReminderEmail = async (
             <a href="${confirmTrackingUrl}" class="btn btn-confirm">✅ Confirm Appointment</a>
             <a href="${cancelTrackingUrl}" class="btn btn-cancel">❌ Cancel Appointment</a>
           </div>
-          ${urgencyLevel === 'high'
-      ? `
+          ${
+            urgencyLevel === 'high'
+              ? `
           <div style="background: #fef2f2; border-radius: 8px; padding: 12px 16px; margin: 12px 0;">
             <p style="margin: 0; font-size: 13px; color: #991b1b; text-align: center;">⚠️ Please respond immediately. Your appointment is in less than 30 minutes.</p>
           </div>`
-      : ''
-    }
-          ${urgencyLevel === 'medium'
-      ? `
+              : ''
+          }
+          ${
+            urgencyLevel === 'medium'
+              ? `
           <div style="background: #fffbeb; border-radius: 8px; padding: 10px 14px; margin: 12px 0;">
             <p style="margin: 0; font-size: 13px; color: #92400e; text-align: center;">🔔 Please confirm or cancel within the next 2 hours.</p>
           </div>`
-      : ''
-    }
+              : ''
+          }
           <p style="font-size: 13px; color: #64748b; text-align: center; margin: 12px 0 0;">Please confirm or cancel at least 2 hours before your appointment.</p>`
     : `
           <p style="font-size: 15px; color: #334155; margin: 0 0 8px;">You booked this appointment. Please arrive on time — we look forward to seeing you.</p>

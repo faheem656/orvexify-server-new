@@ -140,7 +140,12 @@ async function trackPixel(req, res) {
     }
 
     const locked = isLogLocked(log);
-    markOpened(log, { overwriteCurrent: !locked });
+    const lastOpen = log.openedAt ? new Date(log.openedAt).getTime() : 0;
+    const duplicateHit = lastOpen && Date.now() - lastOpen < 20000;
+    markOpened(log, {
+      overwriteCurrent: !locked,
+      bumpCount: !duplicateHit,
+    });
     await log.save();
 
     console.log(
