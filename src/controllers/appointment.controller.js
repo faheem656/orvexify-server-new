@@ -529,9 +529,9 @@ async function confirmByToken(req, res) {
     }
 
     if (appointment.confirmationStatus === 'confirmed') {
-      return res.status(400).json({
-        success: false,
-        message: 'This appointment has already been confirmed.',
+      return res.json({
+        success: true,
+        message: 'This appointment is already confirmed.',
         alreadyConfirmed: true,
         appointment: {
           id: appointment._id,
